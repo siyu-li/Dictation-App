@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     container: swift:6.4-noble
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run TranscriptCore tests
         run: swift test --package-path Packages/TranscriptCore
 
@@ -23,7 +23,7 @@ jobs:
     name: iOS build (macOS)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Show Xcode version
         run: xcodebuild -version
       - name: Install XcodeGen
