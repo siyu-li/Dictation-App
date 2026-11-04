@@ -13,3 +13,6 @@ Config/Local.xcconfig
 DerivedData/
 xcuserdata/
 build.log
+
+# Claude Code agent worktrees
+.claude/worktrees/
