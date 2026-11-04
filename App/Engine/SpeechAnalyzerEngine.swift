@@ -1,29 +1,615 @@
+import AVFoundation
+import CoreMedia
 import Foundation
+import Speech
 import TranscriptCore
 
 /// Live transcription with Apple's on-device SpeechAnalyzer (iOS 26).
 ///
-/// Placeholder: the real implementation (microphone capture, SpeechTranscriber,
-/// interruption handling, optional audio file) replaces this file.
-final class SpeechAnalyzerEngine: TranscriptionEngine, @unchecked Sendable {
-    enum EngineError: LocalizedError {
-        case notImplemented
-
-        var errorDescription: String? {
-            "The transcription engine isn't built yet."
-        }
+/// A session (start → stop) is made of one or more *runs*. A run is one
+/// continuous microphone capture feeding one `SpeechAnalyzer`. A new run starts
+/// after every interruption, audio route change, or recognition error, so a
+/// long recording survives phone calls, Siri and the Camera app.
+///
+/// Everything that starts or ends runs goes through `serialized`, so two
+/// notifications arriving together can never create two runs.
+actor SpeechAnalyzerEngine: TranscriptionEngine {
+    private struct Run {
+        let id: Int
+        let capture: CaptureRun
+        let analyzer: SpeechAnalyzer
+        let resultsTask: Task<Void, Never>
+        let configurationObserver: NSObjectProtocol
+        let startedAt: Date
     }
 
+    /// `UIApplication.didBecomeActiveNotification`, by its raw name so this
+    /// actor doesn't touch main-actor UIKit API.
+    private static let appDidBecomeActive = Notification.Name("UIApplicationDidBecomeActiveNotification")
+
+    /// No audio for this long while capturing counts as an interruption.
+    private static let stallThreshold: TimeInterval = 6
+    /// A resumed run must deliver audio within this time to count as resumed.
+    private static let resumeAudioTimeout: TimeInterval = 3
+
     private let log: DiagnosticsLog
+
+    private var events: AsyncStream<TranscriptionEvent>.Continuation?
+    private var configuration: TranscriptionConfiguration?
+    private var model: ResolvedModel?
+    /// Bumped on every start and stop, so stale notifications are ignored.
+    private var generation = 0
+    private var isActive = false
+    private var isStopping = false
+    private var isInterrupted = false
+    private var currentRun: Run?
+    /// Unique across sessions (identifies runs in notifications and the log).
+    private var runCounter = 0
+    /// Numbers this session's audio files: run-1.m4a, run-2.m4a, ...
+    private var sessionRunIndex = 0
+    private var resumeAttempts = 0
+    private var quickFailures = 0
+    private var retryTask: Task<Void, Never>?
+    private var healthTask: Task<Void, Never>?
+    private var observers: [NSObjectProtocol] = []
+    private var transitionTail: Task<Void, Never>?
 
     init(log: DiagnosticsLog) {
         self.log = log
     }
 
+    // MARK: - TranscriptionEngine
+
     func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
-        log.log("start() called on placeholder engine", category: "engine")
-        throw EngineError.notImplemented
+        // Let any work from a previous session finish first.
+        await transitionTail?.value
+        guard !isActive else { throw SpeechEngineError.alreadyRunning }
+
+        isActive = true
+        isStopping = false
+        isInterrupted = false
+        generation += 1
+        let gen = generation
+        self.configuration = configuration
+        sessionRunIndex = 0
+        resumeAttempts = 0
+        quickFailures = 0
+        let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self, bufferingPolicy: .unbounded)
+        events = continuation
+        logEngine("Starting: locale=\(configuration.localeIdentifier) saveAudio=\(configuration.audioDirectory != nil)")
+
+        do {
+            try await Self.requestMicrophonePermission(log: log)
+            try Self.activateAudioSession(log: log)
+            let status: @Sendable (String) -> Void = { continuation.yield(.status($0)) }
+            var resolved = try await SpeechModelSetup.resolve(
+                localeIdentifier: configuration.localeIdentifier,
+                allowSpeechTranscriber: true,
+                log: log,
+                status: status
+            )
+            try ensureCurrent(gen)
+            model = resolved
+            do {
+                try await startRun()
+            } catch {
+                // SpeechTranscriber may be listed but not work on this device;
+                // try the dictation model once unless the microphone is the problem.
+                let microphoneProblem = (error as? SpeechEngineError)?.isMicrophoneProblem ?? false
+                guard resolved.kind == .speech, !microphoneProblem, !(error is CancellationError) else { throw error }
+                logEngine("SpeechTranscriber run failed (\(EngineDescribe.error(error))); trying DictationTranscriber")
+                resolved = try await SpeechModelSetup.resolve(
+                    localeIdentifier: configuration.localeIdentifier,
+                    allowSpeechTranscriber: false,
+                    log: log,
+                    status: status
+                )
+                try ensureCurrent(gen)
+                model = resolved
+                try await startRun()
+            }
+            if let run = currentRun {
+                let gotAudio = await Self.waitForAudio(run.capture, timeout: Self.resumeAudioTimeout)
+                if !gotAudio { logEngine("Warning: no audio in the first \(Int(Self.resumeAudioTimeout)) s") }
+            }
+            addObservers(gen: gen)
+            startHealthChecks(gen: gen)
+            continuation.yield(.status("Transcribing with \(resolved.kind.rawValue), locale \(resolved.locale.identifier)"))
+            return stream
+        } catch {
+            logEngine("Start failed: \(EngineDescribe.error(error))")
+            if let run = currentRun {
+                currentRun = nil
+                await finalizeRun(run)
+            }
+            Self.deactivateAudioSession(log: log)
+            continuation.finish()
+            events = nil
+            isActive = false
+            self.configuration = nil
+            model = nil
+            generation += 1
+            throw error
+        }
     }
 
-    func stop() async {}
+    func stop() async {
+        await serialized { await self.shutdownLocked(failure: nil) }
+    }
+
+    // MARK: - Serialization
+
+    /// Runs `operation` after every previously queued operation has finished.
+    /// Never call this from inside a serialized operation (it would wait for itself).
+    private func serialized(_ operation: @escaping @Sendable () async -> Void) async {
+        let previous = transitionTail
+        let task = Task {
+            await previous?.value
+            await operation()
+        }
+        transitionTail = task
+        await task.value
+    }
+
+    private func isCurrent(_ gen: Int) -> Bool {
+        gen == generation && isActive && !isStopping
+    }
+
+    private func ensureCurrent(_ gen: Int) throws {
+        guard isCurrent(gen) else { throw CancellationError() }
+    }
+
+    // MARK: - Runs
+
+    /// Starts a new run with the current model. Doesn't touch `isInterrupted`.
+    private func startRun() async throws {
+        guard isActive, !isStopping, let model, let configuration, let events else { throw CancellationError() }
+        runCounter += 1
+        sessionRunIndex += 1
+        let runID = runCounter
+
+        let module = SpeechModelSetup.makeModule(model)
+        let analyzer = SpeechAnalyzer(modules: [module.speechModule])
+        guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module.speechModule]) else {
+            throw SpeechEngineError.audioFormatUnavailable
+        }
+
+        var audioFile: AudioFileWriter?
+        if let directory = configuration.audioDirectory {
+            do {
+                audioFile = try AudioFileWriter(directory: directory, fileName: "run-\(sessionRunIndex).m4a")
+            } catch {
+                logEngine("Run \(runID): can't create audio file: \(EngineDescribe.error(error))")
+                events.yield(.status("Couldn't save audio for this part of the recording: \(error.localizedDescription)"))
+            }
+        }
+
+        let (inputSequence, inputContinuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .unbounded)
+        let capture = CaptureRun(
+            id: runID,
+            analyzerFormat: analyzerFormat,
+            input: inputContinuation,
+            events: events,
+            audioFile: audioFile,
+            log: log
+        )
+
+        do {
+            try await analyzer.start(inputSequence: inputSequence)
+        } catch {
+            capture.stopCapture()
+            _ = capture.finishAudioFile()
+            throw error
+        }
+
+        let resultsTask = Task {
+            do {
+                try await Self.consumeResults(module: module, capture: capture, events: events)
+                await self.runResultsEnded(runID: runID, error: nil)
+            } catch {
+                await self.runResultsEnded(runID: runID, error: error)
+            }
+        }
+
+        do {
+            try capture.startCapture()
+            guard isActive, !isStopping else { throw CancellationError() }
+        } catch {
+            capture.stopCapture()
+            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+            resultsTask.cancel()
+            _ = capture.finishAudioFile()
+            throw error
+        }
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: capture.audioEngine,
+            queue: nil
+        ) { _ in
+            Task { await self.enqueueConfigurationChange(runID: runID) }
+        }
+        currentRun = Run(
+            id: runID,
+            capture: capture,
+            analyzer: analyzer,
+            resultsTask: resultsTask,
+            configurationObserver: observer,
+            startedAt: Date()
+        )
+        logEngine("Run \(runID) started (\(model.kind.rawValue), \(model.locale.identifier))")
+    }
+
+    /// Stops a run's capture and waits until its last final results are
+    /// delivered. The caller must already have cleared `currentRun`.
+    private func finalizeRun(_ run: Run) async {
+        NotificationCenter.default.removeObserver(run.configurationObserver)
+        run.capture.stopCapture()
+
+        let analyzer = run.analyzer
+        let resultsTask = run.resultsTask
+        let runID = run.id
+        let log = self.log
+        let finalize = Task {
+            do {
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+            } catch {
+                log.log("Run \(runID): finalize failed: \(EngineDescribe.error(error))", category: "engine")
+            }
+        }
+        // Don't let a stuck analyzer block stop() forever.
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            log.log("Run \(runID): finalizing took over 20 s; cancelling", category: "engine")
+            finalize.cancel()
+            resultsTask.cancel()
+        }
+        await finalize.value
+        await resultsTask.value
+        watchdog.cancel()
+
+        if let fileName = run.capture.finishAudioFile() {
+            events?.yield(.audioFileFinished(fileName: fileName, at: run.capture.lastAudioDate ?? Date()))
+        }
+        logEngine("Run \(run.id) finalized after \(Int(Date().timeIntervalSince(run.startedAt))) s")
+    }
+
+    private static func consumeResults(
+        module: TranscriberModule,
+        capture: CaptureRun,
+        events: AsyncStream<TranscriptionEvent>.Continuation
+    ) async throws {
+        switch module {
+        case .speech(let transcriber):
+            for try await result in transcriber.results {
+                deliver(text: String(result.text.characters), isFinal: result.isFinal, range: result.range, capture: capture, events: events)
+            }
+        case .dictation(let transcriber):
+            for try await result in transcriber.results {
+                deliver(text: String(result.text.characters), isFinal: result.isFinal, range: result.range, capture: capture, events: events)
+            }
+        }
+    }
+
+    private static func deliver(
+        text: String,
+        isFinal: Bool,
+        range: CMTimeRange,
+        capture: CaptureRun,
+        events: AsyncStream<TranscriptionEvent>.Continuation
+    ) {
+        if isFinal {
+            let interval = capture.wallClockInterval(for: range)
+            events.yield(.final(text: text, start: interval.start, end: interval.end))
+        } else {
+            events.yield(.volatile(text))
+        }
+    }
+
+    /// Called when a run's results stream ends. Expected when the run was
+    /// finalized on purpose (it's no longer `currentRun`); otherwise the
+    /// recognizer died and recovery is queued. Not serialized: `finalizeRun`
+    /// waits for the results task, which ends by calling this.
+    private func runResultsEnded(runID: Int, error: Error?) {
+        guard let run = currentRun, run.id == runID else { return }
+        logEngine("Run \(runID): recognition ended unexpectedly: \(error.map(EngineDescribe.error) ?? "no error")")
+        let gen = generation
+        Task { await self.serialized { await self.recoverFromRunFailureLocked(runID: runID, gen: gen) } }
+    }
+
+    // MARK: - Interruptions and recovery (serialized)
+
+    private func enqueueInterruption(_ info: InterruptionInfo, gen: Int) async {
+        await serialized { await self.interruptionLocked(info, gen: gen) }
+    }
+
+    private func enqueueMediaServicesReset(gen: Int) async {
+        await serialized { await self.mediaServicesResetLocked(gen: gen) }
+    }
+
+    private func enqueueAppBecameActive(gen: Int) async {
+        await serialized { await self.appBecameActiveLocked(gen: gen) }
+    }
+
+    private func enqueueConfigurationChange(runID: Int) async {
+        await serialized { await self.configurationChangeLocked(runID: runID) }
+    }
+
+    private func interruptionLocked(_ info: InterruptionInfo, gen: Int) async {
+        guard isCurrent(gen) else { return }
+        if info.began {
+            logEngine("Interruption began: \(info.reason)")
+            await interruptLocked(at: Date(), reason: info.reason)
+            // Some interruptions never send "ended"; keep trying in the background.
+            scheduleRetries(gen: gen, initialDelay: 10)
+        } else {
+            logEngine("Interruption ended (shouldResume: \(info.shouldResume))")
+            guard isInterrupted else { return }
+            if await !attemptResumeLocked(trigger: "interruption ended") {
+                scheduleRetries(gen: gen, initialDelay: 2)
+            }
+        }
+    }
+
+    private func mediaServicesResetLocked(gen: Int) async {
+        guard isCurrent(gen) else { return }
+        logEngine("Media services were reset; rebuilding audio")
+        await interruptLocked(at: Date(), reason: "The iPhone's audio system restarted")
+        if await !attemptResumeLocked(trigger: "media services reset") {
+            scheduleRetries(gen: gen, initialDelay: 2)
+        }
+    }
+
+    private func appBecameActiveLocked(gen: Int) async {
+        guard isCurrent(gen) else { return }
+        if isInterrupted {
+            if await !attemptResumeLocked(trigger: "app became active") {
+                scheduleRetries(gen: gen, initialDelay: 3)
+            }
+        } else if let run = currentRun, run.capture.secondsWithoutAudio() > 2 {
+            // Audio stopped while the app was in the background (e.g. the
+            // Camera app took the microphone without an interruption).
+            logEngine("App became active; run \(run.id) has had no audio for \(Int(run.capture.secondsWithoutAudio())) s")
+            await interruptLocked(at: run.capture.lastAudioDate ?? run.startedAt, reason: "Another app used the microphone")
+            if await !attemptResumeLocked(trigger: "app became active after audio stopped") {
+                scheduleRetries(gen: gen, initialDelay: 3)
+            }
+        }
+    }
+
+    private func configurationChangeLocked(runID: Int) async {
+        guard isActive, !isStopping, let run = currentRun, run.id == runID else { return }
+        logEngine("Run \(runID): audio route or format changed; restarting capture")
+        currentRun = nil
+        await finalizeRun(run)
+        do {
+            try Self.activateAudioSession(log: log)
+            try await startRun()
+            events?.yield(.status("Audio input changed; capture restarted"))
+        } catch {
+            logEngine("Restart after audio change failed: \(EngineDescribe.error(error))")
+            await interruptLocked(at: run.capture.lastAudioDate ?? Date(), reason: "The microphone changed or became unavailable")
+            scheduleRetries(gen: generation, initialDelay: 2)
+        }
+    }
+
+    private func recoverFromRunFailureLocked(runID: Int, gen: Int) async {
+        guard isCurrent(gen), let run = currentRun, run.id == runID else { return }
+        currentRun = nil
+        await finalizeRun(run)
+        let lifetime = Date().timeIntervalSince(run.startedAt)
+        quickFailures = lifetime < 20 ? quickFailures + 1 : 1
+        if quickFailures >= 3 {
+            await shutdownLocked(failure: "Speech recognition keeps stopping, so recording ended. Everything up to now is saved.")
+            return
+        }
+        await interruptLocked(at: run.capture.lastAudioDate ?? Date(), reason: "Speech recognition restarted")
+        if await !attemptResumeLocked(trigger: "recognition error") {
+            scheduleRetries(gen: gen, initialDelay: 2)
+        }
+    }
+
+    private func healthCheckLocked(gen: Int) async {
+        guard isCurrent(gen), !isInterrupted, let run = currentRun else { return }
+        let silentFor = run.capture.secondsWithoutAudio()
+        guard silentFor > Self.stallThreshold else { return }
+        logEngine("Run \(run.id): no audio for \(Int(silentFor)) s (audio engine running: \(run.capture.audioEngine.isRunning))")
+        await interruptLocked(
+            at: run.capture.lastAudioDate ?? run.startedAt,
+            reason: "The microphone stopped (another app may be using it)"
+        )
+        scheduleRetries(gen: gen, initialDelay: 5)
+    }
+
+    /// Marks the session interrupted (one `interrupted` event per gap) and
+    /// closes the current run so its last results are delivered.
+    private func interruptLocked(at date: Date, reason: String) async {
+        if !isInterrupted {
+            isInterrupted = true
+            events?.yield(.interrupted(at: date, reason: reason))
+        }
+        if let run = currentRun {
+            currentRun = nil
+            await finalizeRun(run)
+        }
+    }
+
+    /// Tries to start a new run after an interruption. Counts as resumed only
+    /// once audio actually arrives.
+    @discardableResult
+    private func attemptResumeLocked(trigger: String) async -> Bool {
+        guard isActive, !isStopping, isInterrupted, currentRun == nil else { return false }
+        resumeAttempts += 1
+        let attempt = resumeAttempts
+        logEngine("Resume attempt \(attempt) (\(trigger))")
+        do {
+            try Self.activateAudioSession(log: log)
+            try await startRun()
+        } catch {
+            logEngine("Resume attempt \(attempt) failed: \(EngineDescribe.error(error))")
+            return false
+        }
+        guard let run = currentRun else { return false }
+        guard await Self.waitForAudio(run.capture, timeout: Self.resumeAudioTimeout) else {
+            logEngine("Resume attempt \(attempt): no audio arrived; closing run \(run.id)")
+            currentRun = nil
+            await finalizeRun(run)
+            return false
+        }
+        isInterrupted = false
+        resumeAttempts = 0
+        retryTask?.cancel()
+        retryTask = nil
+        events?.yield(.resumed(at: Date()))
+        logEngine("Resumed after \(attempt) attempt(s)")
+        return true
+    }
+
+    /// Retries resuming with growing delays (capped at 60 s) until resumed or
+    /// stopped. Replaces any earlier retry schedule.
+    private func scheduleRetries(gen: Int, initialDelay: TimeInterval) {
+        retryTask?.cancel()
+        retryTask = Task {
+            var delay = initialDelay
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(delay))
+                if Task.isCancelled { return }
+                await self.serialized { await self.retryLocked(gen: gen) }
+                if await !self.needsResume(gen: gen) { return }
+                delay = min(delay * 2, 60)
+            }
+        }
+    }
+
+    private func retryLocked(gen: Int) async {
+        guard isCurrent(gen), isInterrupted else { return }
+        await attemptResumeLocked(trigger: "timed retry")
+    }
+
+    private func needsResume(gen: Int) -> Bool {
+        isCurrent(gen) && isInterrupted
+    }
+
+    private func startHealthChecks(gen: Int) {
+        healthTask?.cancel()
+        healthTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { return }
+                await self.serialized { await self.healthCheckLocked(gen: gen) }
+            }
+        }
+    }
+
+    // MARK: - Shutdown
+
+    /// Stops everything and finishes the event stream. With `failure`, sends
+    /// `.failed` first.
+    private func shutdownLocked(failure: String?) async {
+        guard isActive, !isStopping else { return }
+        isStopping = true
+        logEngine(failure.map { "Shutting down after failure: \($0)" } ?? "Stopping")
+        retryTask?.cancel()
+        retryTask = nil
+        healthTask?.cancel()
+        healthTask = nil
+        removeObservers()
+        if let run = currentRun {
+            currentRun = nil
+            await finalizeRun(run)
+        }
+        Self.deactivateAudioSession(log: log)
+        if let failure { events?.yield(.failed(failure)) }
+        events?.finish()
+        events = nil
+        configuration = nil
+        model = nil
+        isInterrupted = false
+        resumeAttempts = 0
+        quickFailures = 0
+        isActive = false
+        isStopping = false
+        generation += 1
+        logEngine("Stopped")
+    }
+
+    // MARK: - Observers
+
+    private func addObservers(gen: Int) {
+        removeObservers()
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard let info = InterruptionInfo(notification) else { return }
+            Task { await self.enqueueInterruption(info, gen: gen) }
+        })
+        observers.append(center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            Task { await self.enqueueMediaServicesReset(gen: gen) }
+        })
+        observers.append(center.addObserver(
+            forName: Self.appDidBecomeActive,
+            object: nil,
+            queue: nil
+        ) { _ in
+            Task { await self.enqueueAppBecameActive(gen: gen) }
+        })
+    }
+
+    private func removeObservers() {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers.removeAll()
+    }
+
+    // MARK: - Audio session and permission
+
+    private static func requestMicrophonePermission(log: DiagnosticsLog) async throws {
+        let granted = await AVAudioApplication.requestRecordPermission()
+        log.log("Microphone permission granted: \(granted)", category: "engine")
+        guard granted else { throw SpeechEngineError.microphonePermissionDenied }
+    }
+
+    /// Record and keep recording in the background. Mixing with others keeps
+    /// other apps' audio playing and makes interruptions less likely.
+    private static func activateAudioSession(log: DiagnosticsLog) throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        try session.setActive(true)
+        let inputs = session.currentRoute.inputs.map(\.portName).joined(separator: ", ")
+        log.log(
+            "Audio session active: \(Int(session.sampleRate)) Hz, input available: \(session.isInputAvailable), inputs: \(inputs.isEmpty ? "none" : inputs)",
+            category: "engine"
+        )
+        guard session.isInputAvailable else { throw SpeechEngineError.microphoneUnavailable }
+    }
+
+    private static func deactivateAudioSession(log: DiagnosticsLog) {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            log.log("Deactivating audio session failed: \(EngineDescribe.error(error))", category: "engine")
+        }
+    }
+
+    private static func waitForAudio(_ capture: CaptureRun, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if capture.hasReceivedAudio { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return capture.hasReceivedAudio
+    }
+
+    private nonisolated func logEngine(_ message: String) {
+        log.log(message, category: "engine")
+    }
 }
