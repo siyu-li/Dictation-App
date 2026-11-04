@@ -1,0 +1,10 @@
+// Copy this file to Config/Local.xcconfig and fill in your values.
+// Local.xcconfig is ignored by git, and survives `xcodegen generate`.
+
+// Your Apple team ID (10 characters). A free personal team works.
+// Find it in Xcode: select your team once under Signing & Capabilities,
+// then look at Build Settings → Development Team.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Something unique to you, e.g. your name. The app id becomes <prefix>.dictation
+BUNDLE_ID_PREFIX = com.yourname

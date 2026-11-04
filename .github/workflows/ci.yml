@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run TranscriptCore tests
+        run: swift test --package-path Packages/TranscriptCore
+
+  ios:
+    name: iOS build (macOS)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Run TranscriptCore tests (macOS)
+        run: swift test --package-path Packages/TranscriptCore
+      - name: Build app for iOS Simulator
+        run: |
+          xcodebuild build \
+            -project Dictation.xcodeproj \
+            -scheme Dictation \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
+      - name: Build app for iPhone (unsigned)
+        run: |
+          xcodebuild build \
+            -project Dictation.xcodeproj \
+            -scheme Dictation \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
