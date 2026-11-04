@@ -29,8 +29,8 @@ summary, saved to Apple Notes with as few taps as possible.
   "Send to Notes", import Camera-app photos taken during the session
 
 ### 3. AI
-- Claude API (key stored in the Keychain): title, summary, key points, action
-  items, speaker guesses — opt-in per session
+- ✅ Claude API (key stored in the Keychain): title, summary, key points, action
+  items, speaker guesses — opt-in per session, included in exports and Notes
 - Later: high-quality re-transcription of saved audio with a cloud speech
   service (better Chinese, mixed English/Chinese, voice-based speaker labels)
 
