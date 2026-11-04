@@ -24,8 +24,13 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
-      - name: Show Xcode version
-        run: xcodebuild -version
+      - name: Select Xcode 26 (the newest Xcode that also runs on Intel Macs)
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app | grep -viE "beta|release_candidate|_rc" | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
