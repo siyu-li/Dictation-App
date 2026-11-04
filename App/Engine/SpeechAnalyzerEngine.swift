@@ -55,6 +55,10 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
     private var transitionTail: Task<Void, Never>?
     /// True while `startBody` runs; `cancelStart()` only acts then.
     private var isStarting = false
+    /// Every `start()` call takes a ticket; `cancelStart()` cancels all
+    /// tickets issued so far, including starts still waiting in the queue.
+    private var startTicketsIssued = 0
+    private var startTicketsCancelledThrough = 0
     /// The model lookup/download of the start in progress, so it can be cancelled.
     private var pendingStartWork: Task<ResolvedModel, Error>?
 
@@ -68,12 +72,20 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         // Starting runs in the serial queue too: notifications that arrive
         // while starting (a call ringing as the user taps Start) are handled
         // right after, in order, instead of racing the first run.
+        startTicketsIssued += 1
+        let ticket = startTicketsIssued
         let box = StartResultBox()
-        await serialized { await self.startLocked(configuration, into: box) }
+        await serialized { await self.startLocked(configuration, ticket: ticket, into: box) }
         return try box.result()
     }
 
-    private func startLocked(_ configuration: TranscriptionConfiguration, into box: StartResultBox) async {
+    private func startLocked(_ configuration: TranscriptionConfiguration, ticket: Int, into box: StartResultBox) async {
+        // Cancelled while it was still waiting behind an earlier operation.
+        guard ticket > startTicketsCancelledThrough else {
+            logEngine("Skipping a start that was cancelled before it began")
+            box.set(.failure(CancellationError()))
+            return
+        }
         do {
             box.set(.success(try await startBody(configuration)))
         } catch {
@@ -83,6 +95,7 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
 
     /// Not serialized: it must be able to interrupt a start in progress.
     func cancelStart() {
+        startTicketsCancelledThrough = startTicketsIssued
         guard isStarting, isActive, !isStopping else { return }
         logEngine("Start cancelled")
         generation += 1 // the start fails at its next check and cleans up
@@ -112,6 +125,7 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
 
         do {
             try await Self.requestMicrophonePermission(log: log)
+            try ensureCurrent(gen) // cancelled while the permission prompt was up
             try Self.activateAudioSession(log: log)
             let status: @Sendable (String) -> Void = { continuation.yield(.status($0)) }
             var resolved = try await resolveModel(configuration.localeIdentifier, allowSpeechTranscriber: true, status: status)

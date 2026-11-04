@@ -50,6 +50,9 @@ enum SpeechModelSetup {
                     try await installAssets(for: model, log: log, status: status)
                     return model
                 } catch {
+                    // A cancelled start must not fall through to downloading
+                    // the other model.
+                    if error is CancellationError || Task.isCancelled { throw CancellationError() }
                     lastError = error
                     log.log("SpeechTranscriber model for \(locale.identifier) unavailable: \(EngineDescribe.error(error))", category: "engine")
                 }
