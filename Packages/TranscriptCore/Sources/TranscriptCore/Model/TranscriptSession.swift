@@ -56,6 +56,8 @@ public struct TranscriptSession: Equatable, Sendable, Identifiable {
     /// True if the app stopped unexpectedly during this session and it was
     /// closed on the next launch.
     public var wasRecovered: Bool
+    /// AI title, summary and speaker guesses, once generated.
+    public var insights: SessionInsights?
 
     public init(
         id: UUID = UUID(),
@@ -65,7 +67,8 @@ public struct TranscriptSession: Equatable, Sendable, Identifiable {
         endedAt: Date? = nil,
         items: [TimelineItem] = [],
         audioRecordings: [AudioRecording] = [],
-        wasRecovered: Bool = false
+        wasRecovered: Bool = false,
+        insights: SessionInsights? = nil
     ) {
         self.id = id
         self.formatVersion = Self.currentFormatVersion
@@ -76,6 +79,7 @@ public struct TranscriptSession: Equatable, Sendable, Identifiable {
         self.items = []
         self.audioRecordings = audioRecordings
         self.wasRecovered = wasRecovered
+        self.insights = insights
         for item in items { insert(item) }
     }
 
@@ -147,7 +151,7 @@ public struct TranscriptSession: Equatable, Sendable, Identifiable {
 
 extension TranscriptSession: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, formatVersion, title, localeIdentifier, startedAt, endedAt, items, audioRecordings, wasRecovered
+        case id, formatVersion, title, localeIdentifier, startedAt, endedAt, items, audioRecordings, wasRecovered, insights
     }
 
     public init(from decoder: Decoder) throws {
@@ -161,6 +165,7 @@ extension TranscriptSession: Codable {
         items = try c.decodeIfPresent([TimelineItem].self, forKey: .items) ?? []
         audioRecordings = try c.decodeIfPresent([AudioRecording].self, forKey: .audioRecordings) ?? []
         wasRecovered = try c.decodeIfPresent(Bool.self, forKey: .wasRecovered) ?? false
+        insights = try c.decodeIfPresent(SessionInsights.self, forKey: .insights)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -174,5 +179,6 @@ extension TranscriptSession: Codable {
         try c.encode(items, forKey: .items)
         try c.encode(audioRecordings, forKey: .audioRecordings)
         try c.encode(wasRecovered, forKey: .wasRecovered)
+        try c.encodeIfPresent(insights, forKey: .insights)
     }
 }
