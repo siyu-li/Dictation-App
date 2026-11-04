@@ -21,6 +21,19 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the plan and status.
 
 You need a Mac with **Xcode 26 or later**, and an iPhone on **iOS 26 or later**.
 
+**Intel Mac?** The App Store only offers the newest Xcode (27), which runs on
+Apple silicon only. Download **Xcode 26.6** instead (needs macOS Tahoe 26.2 or
+later): sign in at [developer.apple.com/download/all](https://developer.apple.com/download/all)
+with your Apple ID, search "Xcode 26", download the `.xip`, double-click it and
+drag Xcode into Applications. Xcode 26 installs on iPhones up to iOS 26; for an
+iPhone on iOS 27, use the sideloading option below.
+
+**No suitable Xcode?** Every CI run builds an installable app file: open the
+repo's **Actions** tab → latest **CI** run → **Artifacts** →
+*Dictation-unsigned-ipa*, and install it with a sideloading tool such as
+Sideloadly using your Apple ID (with a free Apple ID it must be re-installed
+every 7 days).
+
 1. Install [Homebrew](https://brew.sh) if you don't have it, then XcodeGen:
 
    ```bash
