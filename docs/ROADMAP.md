@@ -15,16 +15,16 @@ summary, saved to Apple Notes with as few taps as possible.
   photos, speaker markers, crash recovery), diagnostics log, with tests
 - CI: core tests on Linux and macOS, app build for Simulator and device
 
-### 2. First usable app
-- **Recording and speech** (`App/Engine/`): microphone capture with
-  AVAudioEngine, SpeechAnalyzer + SpeechTranscriber (fallback to
-  DictationTranscriber if the device lacks it), language model download,
-  background recording, automatic resume after interruptions (calls, Siri,
-  Camera app), optional audio file per recording run
-- **Screens** (`App/Views/`, `App/Camera/`): session list, recording screen with
+### 2. First usable app ✅ (builds in CI; needs testing on the iPhone)
+- ✅ **Recording and speech** (`App/Engine/`): microphone capture with
+  AVAudioEngine, SpeechAnalyzer + SpeechTranscriber (falls back to
+  DictationTranscriber), language model download (cancellable), background
+  recording, automatic resume after interruptions (calls, Siri, Camera app,
+  audio pauses), optional audio file per recording run
+- ✅ **Screens** (`App/Views/`, `App/Camera/`): session list, recording screen with
   a small live caption strip, camera / new speaker / stop buttons, transcript
   view with inline photos, settings, diagnostics
-- **Getting text out** (`App/Sharing/`, `App/Intents/`): copy, share
+- ✅ **Getting text out** (`App/Sharing/`, `App/Intents/`): copy, share
   (text and Markdown + photos), Shortcuts action "Get Dictation Transcript", one-tap
   "Send to Notes", import Camera-app photos taken during the session
 
@@ -37,6 +37,13 @@ summary, saved to Apple Notes with as few taps as possible.
 ### 4. Polish
 - Lock Screen Live Activity with elapsed time and the latest line
 - Battery and storage checks for 3-hour sessions
+
+## Review loop
+
+Each milestone goes through review rounds: reviewer agents read the code for
+real bugs, the fixes go in with tests, CI must pass, and the next round checks
+the fixes. Rounds so far: 1 found 15 issues (all fixed), 2 found 4 (fixed),
+3 found nothing serious (3 low-severity edge cases, fixed).
 
 ## How the work is split
 
