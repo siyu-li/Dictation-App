@@ -7,6 +7,8 @@ public struct ExportOptions: Sendable, Equatable {
     public var includeHeader: Bool
     public var timeZone: TimeZone
     public var format: FormatOptions
+    /// Include the AI summary and guessed speaker names when the session has them.
+    public var includeInsights: Bool
 
     public init(
         timestampStyle: TimestampStyle = .clock,
@@ -14,7 +16,8 @@ public struct ExportOptions: Sendable, Equatable {
         clockIncludesSeconds: Bool = false,
         includeHeader: Bool = true,
         timeZone: TimeZone = .current,
-        format: FormatOptions = .init()
+        format: FormatOptions = .init(),
+        includeInsights: Bool = true
     ) {
         self.timestampStyle = timestampStyle
         self.includeTimestamps = includeTimestamps
@@ -22,6 +25,7 @@ public struct ExportOptions: Sendable, Equatable {
         self.includeHeader = includeHeader
         self.timeZone = timeZone
         self.format = format
+        self.includeInsights = includeInsights
     }
 }
 
@@ -60,11 +64,26 @@ public enum TranscriptExporter {
             }
             out.append("")
         }
+        let insights = options.includeInsights ? session.insights : nil
+        if let insights {
+            out.append("Summary")
+            out.append(insights.summary)
+            out.append("")
+            for (title, items) in [("Key points", insights.keyPoints), ("Action items", insights.actionItems)] where !items.isEmpty {
+                out.append(title)
+                out.append(contentsOf: items.map { "• \($0)" })
+                out.append("")
+            }
+            out.append("Transcript")
+            out.append("")
+        }
+        var lastSpeaker: String?
         let blocks = TranscriptFormatter.blocks(for: session.items, options: options.format)
         for (index, block) in blocks.enumerated() {
             switch block {
             case .paragraph(let p):
-                out.append(stamp(p.start, session: session, options: options) + p.text)
+                let speaker = speakerPrefix(for: p, insights: insights, lastSpeaker: &lastSpeaker)
+                out.append(stamp(p.start, session: session, options: options) + speaker + p.text)
             case .speakerChange(let change):
                 out.append("— \(change.label ?? "New speaker") —")
             case .photo(let photo):
@@ -98,12 +117,36 @@ public enum TranscriptExporter {
             }
             out.append("")
         }
+        let insights = options.includeInsights ? session.insights : nil
+        if let insights {
+            out.append("## Summary")
+            out.append("")
+            out.append(insights.summary)
+            out.append("")
+            if !insights.keyPoints.isEmpty {
+                out.append("**Key points**")
+                out.append("")
+                out.append(contentsOf: insights.keyPoints.map { "- \($0)" })
+                out.append("")
+            }
+            if !insights.actionItems.isEmpty {
+                out.append("**Action items**")
+                out.append("")
+                out.append(contentsOf: insights.actionItems.map { "- [ ] \($0)" })
+                out.append("")
+            }
+            out.append("## Transcript")
+            out.append("")
+        }
+        var lastSpeaker: String?
         let time = TimestampFormatter(timeZone: options.timeZone)
         for block in TranscriptFormatter.blocks(for: session.items, options: options.format) {
             switch block {
             case .paragraph(let p):
                 let label = label(p.start, session: session, options: options)
-                out.append(label.map { "**\($0)** " + p.text } ?? p.text)
+                let speaker = speakerPrefix(for: p, insights: insights, lastSpeaker: &lastSpeaker)
+                let text = speaker.isEmpty ? p.text : "*\(speaker.dropLast(2))*: " + p.text
+                out.append(label.map { "**\($0)** " + text } ?? text)
             case .speakerChange(let change):
                 out.append("**— \(change.label ?? "New speaker") —**")
             case .photo(let photo):
@@ -117,6 +160,13 @@ public enum TranscriptExporter {
     }
 
     // MARK: - Helpers
+
+    /// `"Dana: "` when the guessed speaker changes at this paragraph, else `""`.
+    private static func speakerPrefix(for paragraph: Paragraph, insights: SessionInsights?, lastSpeaker: inout String?) -> String {
+        guard let speaker = insights?.speaker(at: paragraph.start) else { return "" }
+        defer { lastSpeaker = speaker }
+        return speaker == lastSpeaker ? "" : "\(speaker): "
+    }
 
     private static func label(_ date: Date, session: TranscriptSession, options: ExportOptions) -> String? {
         guard options.includeTimestamps else { return nil }

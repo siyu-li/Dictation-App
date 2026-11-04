@@ -68,3 +68,62 @@ final class TranscriptExporterTests: XCTestCase {
             .contains("Recording ended unexpectedly"))
     }
 }
+
+final class ExporterInsightsTests: XCTestCase {
+    private func session() -> TranscriptSession {
+        var s = TranscriptSession(title: "Budget review", localeIdentifier: "en-US", startedAt: t0)
+        s.insert(speech("Welcome, I'm Dana.", 1, 2))
+        s.insert(speech("More from Dana.", 10, 11))
+        s.insert(speech("A question.", 20, 21))
+        s.endedAt = at(60)
+        s.insights = SessionInsights(
+            title: "Budget review",
+            summary: "Dana presented the budget.",
+            keyPoints: ["Budget is flat"],
+            actionItems: [],
+            speakers: [SpeakerProfile(label: "Dana", description: "Presenter")],
+            speakerTurns: [SpeakerTurn(start: at(1), speaker: "Dana"), SpeakerTurn(start: at(20), speaker: "Audience")],
+            model: "claude-opus-5-5",
+            generatedAt: t0
+        )
+        return s
+    }
+
+    func testPlainTextIncludesSummaryAndSpeakerChanges() {
+        let text = TranscriptExporter.plainText(for: session(), options: ExportOptions(timeZone: utc))
+        XCTAssertEqual(text, """
+        Budget review
+        Wed 4 Nov 2026 · 14:00–14:01 · 1 min · English (US)
+
+        Summary
+        Dana presented the budget.
+
+        Key points
+        • Budget is flat
+
+        Transcript
+
+        [14:00] Dana: Welcome, I'm Dana.
+
+        [14:00] More from Dana.
+
+        [14:00] Audience: A question.
+
+        """)
+    }
+
+    func testMarkdownIncludesSummaryAndSpeakers() {
+        let md = TranscriptExporter.markdown(for: session(), options: ExportOptions(timeZone: utc))
+        XCTAssertTrue(md.contains("## Summary\n\nDana presented the budget.\n"), md)
+        XCTAssertTrue(md.contains("- Budget is flat"), md)
+        XCTAssertFalse(md.contains("Action items"), md)
+        XCTAssertTrue(md.contains("**14:00** *Dana*: Welcome, I'm Dana."), md)
+        XCTAssertTrue(md.contains("**14:00** More from Dana."), md)
+    }
+
+    func testInsightsCanBeExcluded() {
+        let text = TranscriptExporter.plainText(for: session(), options: ExportOptions(timeZone: utc, includeInsights: false))
+        XCTAssertFalse(text.contains("Summary"))
+        XCTAssertTrue(text.contains("[14:00] Welcome, I'm Dana."))
+    }
+}
