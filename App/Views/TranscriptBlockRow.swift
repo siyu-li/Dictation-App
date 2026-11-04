@@ -14,9 +14,16 @@ struct TranscriptBlockRow: View {
         switch block {
         case .paragraph(let paragraph):
             VStack(alignment: .leading, spacing: 3) {
-                Text(timestampLabel(paragraph.start, in: session, style: style))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(timestampLabel(paragraph.start, in: session, style: style))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    if let speaker = guessedSpeaker(for: paragraph) {
+                        Text(speaker)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                    }
+                }
                 Text(paragraph.text)
                     .font(.body)
                     .textSelection(.enabled)
@@ -68,6 +75,11 @@ struct TranscriptBlockRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         }
+    }
+
+    /// The AI-guessed speaker whose turn starts within this paragraph, if any.
+    private func guessedSpeaker(for paragraph: Paragraph) -> String? {
+        session.insights?.speakerTurns.last { $0.start >= paragraph.start && $0.start <= paragraph.end }?.speaker
     }
 
     private var line: some View {

@@ -75,6 +75,8 @@ struct SettingsView: View {
                     Text("Apps can't write into Notes directly, so Dictation runs a Shortcut that creates the note.")
                 }
 
+                AISettingsSection()
+
                 Section {
                     NavigationLink {
                         DiagnosticsView()

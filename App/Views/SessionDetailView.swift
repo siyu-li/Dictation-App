@@ -32,6 +32,9 @@ struct SessionDetailView: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 header(for: session)
+                if !session.speechSegments.isEmpty {
+                    InsightsSection(sessionID: session.id)
+                }
                 if blocks.isEmpty {
                     Text("Nothing was transcribed in this recording.")
                         .foregroundStyle(.secondary)
