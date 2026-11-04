@@ -11,6 +11,8 @@ final class AppModel {
     let store: FileSessionStore
     let log: DiagnosticsLog
     let recorder: RecordingCoordinator
+    /// AI title/summary generation (Claude).
+    let insights: InsightsService
 
     /// Saved sessions, newest first.
     private(set) var sessions: [TranscriptSession] = []
@@ -23,6 +25,7 @@ final class AppModel {
         self.store = store
         self.settings = AppSettings()
         self.recorder = RecordingCoordinator(store: store, engine: SpeechAnalyzerEngine(log: log), log: log)
+        self.insights = InsightsService(settings: AISettings(), log: log)
 
         log.log("App launched", category: "app")
         SessionRecovery.recoverUnfinished(in: store, log: log)
