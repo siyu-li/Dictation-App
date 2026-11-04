@@ -90,11 +90,14 @@ final class InsightsService {
             return nil
         }
         // Ask iOS for time to finish if the user locks the phone or switches
-        // apps while Claude is writing.
-        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "AI summary")
-        defer {
-            if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
+        // apps while Claude is writing. When the time runs out the task must be
+        // ended, or iOS terminates the app; the request then fails and the
+        // user can tap Try again.
+        let backgroundTask = BackgroundTaskHandle()
+        backgroundTask.id = UIApplication.shared.beginBackgroundTask(withName: "AI summary") {
+            MainActor.assumeIsolated { backgroundTask.end() }
         }
+        defer { backgroundTask.end() }
         do {
             let request = try InsightsRequest(session: session, model: settings.model, format: format)
             phases[id] = .running(receivedCharacters: 0)
@@ -139,5 +142,18 @@ extension AppModel {
             latest.title = insights.title
         }
         update(latest)
+    }
+}
+
+/// A UIKit background task id shared by the expiration handler and the
+/// normal end, so it's ended exactly once.
+@MainActor
+private final class BackgroundTaskHandle {
+    var id: UIBackgroundTaskIdentifier = .invalid
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

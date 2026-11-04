@@ -53,6 +53,10 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
     private var healthTask: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var transitionTail: Task<Void, Never>?
+    /// True while `startBody` runs; `cancelStart()` only acts then.
+    private var isStarting = false
+    /// The model lookup/download of the start in progress, so it can be cancelled.
+    private var pendingStartWork: Task<ResolvedModel, Error>?
 
     init(log: DiagnosticsLog) {
         self.log = log
@@ -77,8 +81,21 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         }
     }
 
+    /// Not serialized: it must be able to interrupt a start in progress.
+    func cancelStart() {
+        guard isStarting, isActive, !isStopping else { return }
+        logEngine("Start cancelled")
+        generation += 1 // the start fails at its next check and cleans up
+        pendingStartWork?.cancel()
+    }
+
     private func startBody(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
         guard !isActive else { throw SpeechEngineError.alreadyRunning }
+        isStarting = true
+        defer {
+            isStarting = false
+            pendingStartWork = nil
+        }
 
         isActive = true
         isStopping = false
@@ -97,12 +114,7 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             try await Self.requestMicrophonePermission(log: log)
             try Self.activateAudioSession(log: log)
             let status: @Sendable (String) -> Void = { continuation.yield(.status($0)) }
-            var resolved = try await SpeechModelSetup.resolve(
-                localeIdentifier: configuration.localeIdentifier,
-                allowSpeechTranscriber: true,
-                log: log,
-                status: status
-            )
+            var resolved = try await resolveModel(configuration.localeIdentifier, allowSpeechTranscriber: true, status: status)
             try ensureCurrent(gen)
             model = resolved
             // Listen for interruptions before the first run starts so none are missed.
@@ -115,20 +127,18 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
                 let microphoneProblem = (error as? SpeechEngineError)?.isMicrophoneProblem ?? false
                 guard resolved.kind == .speech, !microphoneProblem, !(error is CancellationError) else { throw error }
                 logEngine("SpeechTranscriber run failed (\(EngineDescribe.error(error))); trying DictationTranscriber")
-                resolved = try await SpeechModelSetup.resolve(
-                    localeIdentifier: configuration.localeIdentifier,
-                    allowSpeechTranscriber: false,
-                    log: log,
-                    status: status
-                )
+                try ensureCurrent(gen)
+                resolved = try await resolveModel(configuration.localeIdentifier, allowSpeechTranscriber: false, status: status)
                 try ensureCurrent(gen)
                 model = resolved
                 try await startRun()
             }
+            try ensureCurrent(gen)
             if let run = currentRun {
                 let gotAudio = await Self.waitForAudio(run.capture, timeout: Self.resumeAudioTimeout)
                 if !gotAudio { logEngine("Warning: no audio in the first \(Int(Self.resumeAudioTimeout)) s") }
             }
+            try ensureCurrent(gen)
             startHealthChecks(gen: gen)
             continuation.yield(.status("Transcribing with \(resolved.kind.rawValue), locale \(resolved.locale.identifier)"))
             return stream
@@ -152,6 +162,29 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
 
     func stop() async {
         await serialized { await self.shutdownLocked(failure: nil) }
+    }
+
+    /// Looks up (and if needed downloads) the speech model as a cancellable task.
+    private func resolveModel(
+        _ localeIdentifier: String,
+        allowSpeechTranscriber: Bool,
+        status: @escaping @Sendable (String) -> Void
+    ) async throws -> ResolvedModel {
+        let log = self.log
+        let work = Task {
+            try await SpeechModelSetup.resolve(
+                localeIdentifier: localeIdentifier,
+                allowSpeechTranscriber: allowSpeechTranscriber,
+                log: log,
+                status: status
+            )
+        }
+        pendingStartWork = work
+        return try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: {
+            work.cancel()
+        }
     }
 
     // MARK: - Serialization
@@ -236,7 +269,11 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             guard isActive, !isStopping else { throw CancellationError() }
         } catch {
             capture.stopCapture()
-            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+            // Bounded, so a stuck analyzer can't hang the serial queue (and stop()).
+            let finished = await Self.waitAtMost(seconds: 5) {
+                try? await analyzer.finalizeAndFinishThroughEndOfInput()
+            }
+            if !finished { logEngine("Run \(runID): finalize after failed start timed out") }
             resultsTask.cancel()
             _ = capture.finishAudioFile()
             throw error
@@ -694,13 +731,17 @@ extension SpeechAnalyzerEngine {
         await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let once = ResumeOnce(continuation)
             let timer = Task {
-                try? await Task.sleep(for: .seconds(seconds))
+                do {
+                    try await Task.sleep(for: .seconds(seconds))
+                } catch {
+                    return // cancelled because the work finished
+                }
                 once.resume(false)
             }
             Task {
                 await work()
-                timer.cancel()
                 once.resume(true)
+                timer.cancel()
             }
         }
     }

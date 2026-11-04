@@ -48,4 +48,11 @@ public enum TranscriptionEvent: Sendable, Equatable {
 public protocol TranscriptionEngine: Sendable {
     func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent>
     func stop() async
+    /// Abandons a `start` that hasn't returned yet (e.g. a slow model
+    /// download). The pending `start` then throws. Does nothing otherwise.
+    func cancelStart() async
+}
+
+extension TranscriptionEngine {
+    public func cancelStart() async {}
 }

@@ -174,6 +174,7 @@ final class RecordingCoordinatorTests: XCTestCase {
 
     func testCancelWhileStartingDiscardsSessionAndStopsLateEngine() async throws {
         let gated = GatedEngine()
+        gated.honorsCancel = false
         let clock = clock!
         let coordinator = RecordingCoordinator(store: store, engine: gated, autosaveInterval: .seconds(3600), now: { clock.now() })
         let startTask = Task { try await coordinator.start(language: "en-US", saveAudio: false) }
@@ -186,7 +187,9 @@ final class RecordingCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.session)
         XCTAssertEqual(try store.listSessions(), [])
 
-        // The engine finishes starting later and must be shut down again.
+        // This engine ignores cancellation: it finishes starting later and must
+        // be shut down again.
+        for _ in 0..<20 where gated.cancelCount == 0 { await Task.yield() }
         gated.release()
         try await startTask.value
         XCTAssertEqual(gated.stopCount, 1)
@@ -200,6 +203,32 @@ final class RecordingCoordinatorTests: XCTestCase {
         gated.release()
         try await next.value
         XCTAssertEqual(coordinator.state, .recording)
+    }
+
+    func testCancelledStartRemovesFilesAndAllowsImmediateRestart() async throws {
+        let gated = GatedEngine()
+        gated.writesAudioFile = true
+        let clock = clock!
+        let coordinator = RecordingCoordinator(store: store, engine: gated, autosaveInterval: .seconds(3600), now: { clock.now() })
+        let first = Task { try await coordinator.start(language: "zh-CN", saveAudio: true) }
+        while !gated.isWaiting { await Task.yield() }
+        let firstID = try XCTUnwrap(coordinator.session?.id)
+
+        coordinator.cancelStart()
+        try await first.value
+        XCTAssertEqual(gated.cancelCount, 1)
+        XCTAssertEqual(gated.stopCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.sessionDirectory(for: firstID).path),
+                       "the audio file the engine wrote must be removed")
+
+        // Starting again right away works.
+        gated.writesAudioFile = false
+        let second = Task { try await coordinator.start(language: "en-US", saveAudio: false) }
+        while !gated.isWaiting { await Task.yield() }
+        gated.release()
+        try await second.value
+        XCTAssertEqual(coordinator.state, .recording)
+        XCTAssertEqual(try store.listSessions().map(\.localeIdentifier), ["en-US"])
     }
 
     func testRecoveryClosesUnfinishedSessions() throws {

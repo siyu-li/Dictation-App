@@ -91,11 +91,13 @@ public final class RecordingCoordinator {
             )
             let events = try await engine.start(configuration)
             guard generation == startGeneration else {
-                // Cancelled while the engine was starting: shut it down again.
+                // Cancelled while the engine was starting: shut it down again,
+                // and remove anything it wrote (e.g. an audio file).
                 log?.log("Engine started after cancel; stopping it", category: "recorder")
                 let drain = Task { for await _ in events {} }
                 await engine.stop()
                 await drain.value
+                try? store.delete(id: newSession.id)
                 return
             }
             state = .recording
@@ -108,8 +110,12 @@ public final class RecordingCoordinator {
             }
             startAutosave()
         } catch {
-            // After cancelStart() everything is already cleaned up.
-            guard generation == startGeneration else { return }
+            // After cancelStart() the session is already gone; remove anything
+            // the engine wrote before it gave up.
+            guard generation == startGeneration else {
+                try? store.delete(id: newSession.id)
+                return
+            }
             log?.log("Start failed: \(error)", category: "recorder")
             try? store.delete(id: newSession.id)
             session = nil
@@ -130,6 +136,8 @@ public final class RecordingCoordinator {
         volatileText = ""
         state = .idle
         log?.log("Start cancelled by the user", category: "recorder")
+        let engine = engine
+        Task { await engine.cancelStart() }
     }
 
     /// Stops recording, waits for the last results, saves and returns the

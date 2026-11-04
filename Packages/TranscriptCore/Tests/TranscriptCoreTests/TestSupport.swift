@@ -78,14 +78,30 @@ final class GatedEngine: TranscriptionEngine, @unchecked Sendable {
     private var gate: CheckedContinuation<Void, Never>?
     private var continuation: AsyncStream<TranscriptionEvent>.Continuation?
     private var stops = 0
+    private var cancels = 0
+    private var cancelled = false
+    /// Simulates an engine that already wrote an audio file before being cancelled.
+    var writesAudioFile = false
+    /// When false, `cancelStart()` is ignored (like an engine stuck in a download).
+    var honorsCancel = true
 
     var isWaiting: Bool { lock.withLock { gate != nil } }
     var stopCount: Int { lock.withLock { stops } }
+    var cancelCount: Int { lock.withLock { cancels } }
 
     func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
+        if writesAudioFile, let directory = configuration.audioDirectory {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data([1]).write(to: directory.appendingPathComponent("run-1.m4a"))
+        }
         await withCheckedContinuation { (gate: CheckedContinuation<Void, Never>) in
             lock.withLock { self.gate = gate }
         }
+        let wasCancelled = lock.withLock { () -> Bool in
+            defer { cancelled = false }
+            return cancelled
+        }
+        if wasCancelled { throw CancellationError() }
         let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self)
         lock.withLock { self.continuation = continuation }
         return stream
@@ -105,5 +121,17 @@ final class GatedEngine: TranscriptionEngine, @unchecked Sendable {
             return self.continuation
         }
         continuation?.finish()
+    }
+
+    /// Like the real engine: abandons the pending start, which then throws.
+    func cancelStart() async {
+        let gate = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            cancels += 1
+            guard honorsCancel else { return nil }
+            cancelled = true
+            defer { self.gate = nil }
+            return self.gate
+        }
+        gate?.resume()
     }
 }
