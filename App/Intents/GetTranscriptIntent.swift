@@ -19,7 +19,14 @@ struct GetTranscriptIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let sessions = try AppPaths.makeStore().listSessions()
+        let store = AppPaths.makeStore()
+        // Fast path: Send to Notes passes the session id, so load just that file.
+        if let id = UUID(uuidString: sessionID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") {
+            guard let session = try? store.load(id: id) else { throw TranscriptIntentError.sessionNotFound }
+            let text = TranscriptExporter.plainText(for: session, options: AppSettings().exportOptions)
+            return .result(value: text)
+        }
+        let sessions = try store.listSessions()
         switch SessionLookup.find(sessionID, in: sessions) {
         case .found(let session):
             let text = TranscriptExporter.plainText(for: session, options: AppSettings().exportOptions)

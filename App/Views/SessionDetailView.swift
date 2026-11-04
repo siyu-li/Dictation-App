@@ -17,7 +17,9 @@ struct SessionDetailView: View {
     @State private var shareItem: ShareItem?
     @State private var viewerPhoto: PhotoAttachment?
     @State private var toastMessage: String?
-    @State private var isImporting = false
+    @State private var isExporting = false
+
+    private var isImporting: Bool { model.importingSessionIDs.contains(sessionID) }
 
     var body: some View {
         if let session = model.session(id: sessionID) {
@@ -28,27 +30,25 @@ struct SessionDetailView: View {
     }
 
     private func content(for session: TranscriptSession) -> some View {
-        let blocks = TranscriptFormatter.blocks(for: session.items, options: settings.formatOptions)
-        return ScrollView {
+        ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 header(for: session)
                 if !session.speechSegments.isEmpty {
                     InsightsSection(sessionID: session.id)
                 }
-                if blocks.isEmpty {
+                if session.items.isEmpty {
                     Text("Nothing was transcribed in this recording.")
                         .foregroundStyle(.secondary)
                         .padding(.top, 24)
                 }
-                ForEach(blocks) { block in
-                    TranscriptBlockRow(
-                        block: block,
-                        session: session,
-                        style: settings.timestampStyle,
-                        photoURL: { model.photoURL($0, in: session) },
-                        onPhotoTap: { viewerPhoto = $0 }
-                    )
-                }
+                TranscriptBlocksList(
+                    session: session,
+                    options: settings.formatOptions,
+                    style: settings.timestampStyle,
+                    photoURL: { model.photoURL($0, in: session) },
+                    onPhotoTap: { viewerPhoto = $0 }
+                )
+                .equatable()
             }
             .padding()
         }
@@ -143,7 +143,9 @@ struct SessionDetailView: View {
                 Label("Copy all", systemImage: "doc.on.doc")
             }
 
-            ShareLink(item: TranscriptSharing.plainText(for: session, settings: settings)) {
+            Button {
+                shareText(session)
+            } label: {
                 Label("Share text", systemImage: "square.and.arrow.up")
             }
 
@@ -152,6 +154,7 @@ struct SessionDetailView: View {
             } label: {
                 Label("Export Markdown + photos", systemImage: "folder")
             }
+            .disabled(isExporting)
 
             Button {
                 sendToNotes(session)
@@ -194,13 +197,26 @@ struct SessionDetailView: View {
         model.update(updated)
     }
 
-    private func exportFolder(_ session: TranscriptSession) {
+    private func shareText(_ session: TranscriptSession) {
         do {
-            let url = try TranscriptSharing.exportFolder(for: session, store: model.store, settings: settings)
-            shareItem = ShareItem(url: url)
+            shareItem = ShareItem(url: try TranscriptSharing.plainTextFile(for: session, settings: settings))
         } catch {
-            model.log.log("Export failed: \(error)", category: "ui")
-            toastMessage = "Couldn't export: \(error.localizedDescription)"
+            model.log.log("Text export failed: \(error)", category: "ui")
+            toastMessage = "Couldn't share: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportFolder(_ session: TranscriptSession) {
+        isExporting = true
+        Task {
+            defer { isExporting = false }
+            do {
+                let url = try await TranscriptSharing.exportFolder(for: session, store: model.store, settings: settings)
+                shareItem = ShareItem(url: url)
+            } catch {
+                model.log.log("Export failed: \(error)", category: "ui")
+                toastMessage = "Couldn't export: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -214,14 +230,11 @@ struct SessionDetailView: View {
     }
 
     private func importPhotos(_ session: TranscriptSession) {
-        isImporting = true
         Task {
-            defer { isImporting = false }
             do {
-                let result = try await PhotoLibraryImporter.importPhotos(into: session, store: model.store, log: model.log)
-                if result.added > 0 {
-                    model.update(result.session)
-                    toastMessage = "Added \(result.added) photo\(result.added == 1 ? "" : "s")"
+                let added = try await model.importLibraryPhotos(for: session.id)
+                if added > 0 {
+                    toastMessage = "Added \(added) photo\(added == 1 ? "" : "s")"
                 } else {
                     toastMessage = "No new photos from the time of this recording"
                 }

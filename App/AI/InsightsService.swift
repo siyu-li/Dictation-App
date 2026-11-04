@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import TranscriptCore
+import UIKit
 
 /// AI preferences. The API key lives in the Keychain; the model choice in
 /// UserDefaults.
@@ -50,6 +51,8 @@ final class InsightsService {
     @ObservationIgnored private let log: DiagnosticsLog
     @ObservationIgnored private let client = ClaudeClient()
     private var phases: [UUID: Phase] = [:]
+    /// Estimates are cached because building a request formats the whole transcript.
+    @ObservationIgnored private var estimateCache: [String: (tokens: Int, cost: Double)] = [:]
 
     init(settings: AISettings, log: DiagnosticsLog) {
         self.settings = settings
@@ -67,10 +70,14 @@ final class InsightsService {
 
     /// Rough input size and upper-end cost, or nil if there's nothing to send.
     func estimate(for session: TranscriptSession, format: FormatOptions) -> (tokens: Int, cost: Double)? {
+        let key = "\(session.id)|\(session.items.count)|\(settings.model.rawValue)|\(format.pauseThreshold)"
+        if let cached = estimateCache[key] { return cached }
         guard let request = try? InsightsRequest(session: session, model: settings.model, format: format) else {
             return nil
         }
-        return (request.estimatedInputTokens, request.estimatedMaxCost)
+        let value = (request.estimatedInputTokens, request.estimatedCost)
+        estimateCache[key] = value
+        return value
     }
 
     /// Calls Claude and returns the insights, or nil on failure (the error is
@@ -81,6 +88,12 @@ final class InsightsService {
         guard let apiKey = settings.apiKey() else {
             phases[id] = .failed(ClaudeAPIError.missingAPIKey.errorDescription ?? "Missing API key")
             return nil
+        }
+        // Ask iOS for time to finish if the user locks the phone or switches
+        // apps while Claude is writing.
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "AI summary")
+        defer {
+            if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
         }
         do {
             let request = try InsightsRequest(session: session, model: settings.model, format: format)

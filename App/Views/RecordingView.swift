@@ -154,7 +154,25 @@ struct RecordingView: View {
         .disabled(!recorder.isRecording)
     }
 
+    @ViewBuilder
     private var stopButton: some View {
+        if recorder.state == .starting {
+            Button {
+                model.cancelStart()
+            } label: {
+                Label("Cancel", systemImage: "xmark")
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+        } else {
+            stopRecordingButton
+        }
+    }
+
+    private var stopRecordingButton: some View {
         Button {
             showStopConfirmation = true
         } label: {
@@ -196,7 +214,7 @@ struct RecordingView: View {
 
     private var statusDetail: String? {
         switch recorder.state {
-        case .starting: "First use may download the speech model."
+        case .starting: "Getting the microphone and speech model ready. The first time you use a language, the model downloads, which can take a few minutes on a slow connection."
         case .interrupted(let reason): "Paused: \(reason). Will resume automatically."
         case .stopping: "Saving the last words of the transcript."
         case .recording: "You can lock your phone. Recording continues."
@@ -259,20 +277,17 @@ struct LiveTranscriptView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         LazyVStack(alignment: .leading, spacing: 14) {
                             if let session = recorder.session {
-                                ForEach(TranscriptFormatter.blocks(for: session.items, options: settings.formatOptions)) { block in
-                                    TranscriptBlockRow(
-                                        block: block,
-                                        session: session,
-                                        style: settings.timestampStyle,
-                                        photoURL: { model.photoURL($0, in: session) }
-                                    )
-                                }
+                                // Re-formatted only when the timeline changes,
+                                // not on every in-progress caption update.
+                                TranscriptBlocksList(
+                                    session: session,
+                                    options: settings.formatOptions,
+                                    style: settings.timestampStyle,
+                                    photoURL: { model.photoURL($0, in: session) }
+                                )
+                                .equatable()
                             }
-                            if !recorder.volatileText.isEmpty {
-                                Text(recorder.volatileText)
-                                    .foregroundStyle(.secondary)
-                                    .italic()
-                            }
+                            LiveVolatileText()
                         }
                         Color.clear
                             .frame(height: 1)
@@ -302,6 +317,20 @@ struct LiveTranscriptView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+/// The in-progress (not yet final) caption text. Its own view so that its
+/// frequent updates don't re-render the whole transcript.
+private struct LiveVolatileText: View {
+    @Environment(RecordingCoordinator.self) private var recorder
+
+    var body: some View {
+        if !recorder.volatileText.isEmpty {
+            Text(recorder.volatileText)
+                .foregroundStyle(.secondary)
+                .italic()
         }
     }
 }

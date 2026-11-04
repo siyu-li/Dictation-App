@@ -16,6 +16,9 @@ final class AppModel {
 
     /// Saved sessions, newest first.
     private(set) var sessions: [TranscriptSession] = []
+    /// Sessions with a Photos-library import in progress.
+    private(set) var importingSessionIDs: Set<UUID> = []
+    @ObservationIgnored private var startTask: Task<Void, Never>?
 
     init() {
         let root = AppPaths.root
@@ -28,10 +31,14 @@ final class AppModel {
         self.insights = InsightsService(settings: AISettings(), log: log)
 
         log.log("App launched", category: "app")
-        SessionRecovery.recoverUnfinished(in: store, log: log)
-        reloadSessions()
-        recorder.onSessionFinished = { [weak self] _ in
-            self?.reloadSessions()
+        do {
+            // One read of the store at launch; sessions left open by a crash are closed.
+            sessions = SessionRecovery.recoverUnfinished(try store.listSessions(), store: store, log: log).sessions
+        } catch {
+            log.log("Listing sessions failed: \(error)", category: "app")
+        }
+        recorder.onSessionFinished = { [weak self] finished in
+            self?.upsert(finished)
         }
     }
 
@@ -50,10 +57,12 @@ final class AppModel {
     }
 
     /// Saves changes to a finished session (rename, imported photos, AI results, ...).
+    /// Callers should start from the latest `session(id:)` so they don't
+    /// overwrite changes made meanwhile.
     func update(_ session: TranscriptSession) {
         do {
             try store.save(session)
-            reloadSessions()
+            upsert(session)
         } catch {
             log.log("Saving session \(session.id) failed: \(error)", category: "app")
         }
@@ -65,7 +74,48 @@ final class AppModel {
         } catch {
             log.log("Deleting session \(id) failed: \(error)", category: "app")
         }
-        reloadSessions()
+        sessions.removeAll { $0.id == id }
+    }
+
+    /// Replaces the in-memory copy (or inserts it, newest first) without
+    /// re-reading every session from disk.
+    private func upsert(_ session: TranscriptSession) {
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[index] = session
+        } else {
+            let index = sessions.firstIndex { $0.startedAt < session.startedAt } ?? sessions.count
+            sessions.insert(session, at: index)
+        }
+    }
+
+    /// Imports Photos-library pictures taken during a session and merges them
+    /// into the *latest* saved version (the import can take a while, and the
+    /// user may rename, summarize or delete the recording meanwhile).
+    /// Returns how many photos were added.
+    func importLibraryPhotos(for id: UUID) async throws -> Int {
+        guard !importingSessionIDs.contains(id), let original = session(id: id) else { return 0 }
+        importingSessionIDs.insert(id)
+        defer { importingSessionIDs.remove(id) }
+
+        let result = try await PhotoLibraryImporter.importPhotos(into: original, store: store, log: log)
+        let originalIDs = Set(original.photos.map(\.id))
+        let newPhotos = result.session.photos.filter { !originalIDs.contains($0.id) }
+        guard !newPhotos.isEmpty else { return 0 }
+
+        guard var latest = session(id: id) else {
+            // Deleted while importing: remove the files the import wrote.
+            try? store.delete(id: id)
+            log.log("Session \(id) was deleted during photo import; discarded imported photos", category: "photos")
+            return 0
+        }
+        let known = Set(latest.photos.compactMap(\.libraryIdentifier))
+        var added = 0
+        for photo in newPhotos where !(photo.libraryIdentifier.map(known.contains) ?? false) {
+            latest.insert(.photo(photo))
+            added += 1
+        }
+        update(latest)
+        return added
     }
 
     // MARK: - Recording
@@ -73,11 +123,25 @@ final class AppModel {
     /// Starts recording with the current settings. Errors are shown through
     /// `recorder.lastError`.
     func startRecording() async {
-        do {
-            try await recorder.start(language: settings.language.rawValue, saveAudio: settings.saveAudio)
-        } catch {
-            // Already logged and exposed via recorder.lastError.
+        let language = settings.language.rawValue
+        let saveAudio = settings.saveAudio
+        let recorder = recorder
+        let task = Task {
+            do {
+                try await recorder.start(language: language, saveAudio: saveAudio)
+            } catch {
+                // Already logged and exposed via recorder.lastError.
+            }
         }
+        startTask = task
+        await task.value
+        startTask = nil
+    }
+
+    /// Cancels a start that's taking too long (e.g. the first speech model download).
+    func cancelStart() {
+        recorder.cancelStart()
+        startTask?.cancel()
     }
 
     @discardableResult

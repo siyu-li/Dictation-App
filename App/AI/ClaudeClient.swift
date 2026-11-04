@@ -58,6 +58,9 @@ struct ClaudeClient: Sendable {
             throw ClaudeAPIError.fromResponse(status: http.statusCode, body: body)
         }
 
+        // From here on Claude has accepted the request, so failures are not
+        // retried automatically: a retry would be billed again. The user can
+        // tap Try again.
         var accumulator = ClaudeStreamAccumulator()
         do {
             for try await line in bytes.lines {
@@ -65,9 +68,11 @@ struct ClaudeClient: Sendable {
                 progress(accumulator.text.count)
             }
         } catch {
-            throw ClaudeAPIError.network(error.localizedDescription)
+            throw ClaudeAPIError.streamInterrupted(error.localizedDescription)
         }
-        if let streamError = accumulator.streamError { throw streamError }
+        if let streamError = accumulator.streamError {
+            throw ClaudeAPIError.streamInterrupted(streamError.errorDescription ?? "server error")
+        }
         return accumulator
     }
 }

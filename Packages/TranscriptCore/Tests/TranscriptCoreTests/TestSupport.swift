@@ -70,3 +70,40 @@ final class MockEngine: TranscriptionEngine, @unchecked Sendable {
         continuation?.finish()
     }
 }
+
+/// An engine whose `start` waits until the test calls `release()`, like a
+/// slow first-time speech model download.
+final class GatedEngine: TranscriptionEngine, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate: CheckedContinuation<Void, Never>?
+    private var continuation: AsyncStream<TranscriptionEvent>.Continuation?
+    private var stops = 0
+
+    var isWaiting: Bool { lock.withLock { gate != nil } }
+    var stopCount: Int { lock.withLock { stops } }
+
+    func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
+        await withCheckedContinuation { (gate: CheckedContinuation<Void, Never>) in
+            lock.withLock { self.gate = gate }
+        }
+        let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self)
+        lock.withLock { self.continuation = continuation }
+        return stream
+    }
+
+    func release() {
+        let gate = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            defer { self.gate = nil }
+            return self.gate
+        }
+        gate?.resume()
+    }
+
+    func stop() async {
+        let continuation = lock.withLock { () -> AsyncStream<TranscriptionEvent>.Continuation? in
+            stops += 1
+            return self.continuation
+        }
+        continuation?.finish()
+    }
+}

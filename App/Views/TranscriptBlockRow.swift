@@ -96,3 +96,35 @@ struct TranscriptBlockRow: View {
         return "No audio \(start)–\(time.clock(end, includeSeconds: true)) (\(length)) · \(gap.reason)"
     }
 }
+
+/// All blocks of a transcript as rows. Equatable on what affects the
+/// formatting, so long transcripts are only re-formatted when they change.
+struct TranscriptBlocksList: View, Equatable {
+    let session: TranscriptSession
+    let options: FormatOptions
+    let style: TimestampStyle
+    let photoURL: (PhotoAttachment) -> URL
+    var onPhotoTap: ((PhotoAttachment) -> Void)?
+
+    static func == (lhs: TranscriptBlocksList, rhs: TranscriptBlocksList) -> Bool {
+        lhs.session.id == rhs.session.id
+            && lhs.session.items.count == rhs.session.items.count
+            && lhs.session.items.last == rhs.session.items.last
+            && lhs.session.insights == rhs.session.insights
+            && lhs.options == rhs.options
+            && lhs.style == rhs.style
+            && (lhs.onPhotoTap == nil) == (rhs.onPhotoTap == nil)
+    }
+
+    var body: some View {
+        ForEach(TranscriptFormatter.blocks(for: session.items, options: options)) { block in
+            TranscriptBlockRow(
+                block: block,
+                session: session,
+                style: style,
+                photoURL: photoURL,
+                onPhotoTap: onPhotoTap
+            )
+        }
+    }
+}

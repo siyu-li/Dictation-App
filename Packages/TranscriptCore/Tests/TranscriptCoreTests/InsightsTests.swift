@@ -71,10 +71,13 @@ final class InsightsRequestTests: XCTestCase {
         let request = try InsightsRequest(session: session(), model: .opus, timeZone: utc)
         XCTAssertGreaterThan(request.estimatedInputTokens, 0)
         // Output dominates for a tiny transcript: 8k * $20/M = $0.16.
-        XCTAssertEqual(request.estimatedMaxCost, 0.16, accuracy: 0.02)
+        XCTAssertEqual(request.estimatedCost, 0.16, accuracy: 0.02)
         XCTAssertEqual(ClaudeModel.opus.cost(inputTokens: 1_000_000, outputTokens: 0), 4.0, accuracy: 0.0001)
         XCTAssertEqual(TokenEstimate.tokens(for: "我们开会"), 4)
-        XCTAssertEqual(TokenEstimate.tokens(for: "abcdefgh"), 2)
+        XCTAssertEqual(TokenEstimate.tokens(for: "abcdefg"), 2)
+        XCTAssertEqual(ClaudePricing.cost(modelID: "claude-opus-4-8", inputTokens: 1_000_000, outputTokens: 0), 5)
+        XCTAssertNil(ClaudePricing.cost(modelID: "unknown", inputTokens: 1, outputTokens: 1))
+        
     }
 }
 

@@ -154,6 +154,36 @@ final class RecordingCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.session)
     }
 
+    func testCancelWhileStartingDiscardsSessionAndStopsLateEngine() async throws {
+        let gated = GatedEngine()
+        let clock = clock!
+        let coordinator = RecordingCoordinator(store: store, engine: gated, autosaveInterval: .seconds(3600), now: { clock.now() })
+        let startTask = Task { try await coordinator.start(language: "en-US", saveAudio: false) }
+        while !gated.isWaiting { await Task.yield() }
+        XCTAssertEqual(coordinator.state, .starting)
+        XCTAssertEqual(try store.listSessions().count, 1)
+
+        coordinator.cancelStart()
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertNil(coordinator.session)
+        XCTAssertEqual(try store.listSessions(), [])
+
+        // The engine finishes starting later and must be shut down again.
+        gated.release()
+        try await startTask.value
+        XCTAssertEqual(gated.stopCount, 1)
+        XCTAssertEqual(coordinator.state, .idle)
+        XCTAssertNil(coordinator.session)
+        XCTAssertEqual(try store.listSessions(), [])
+
+        // A new recording works normally afterwards.
+        let next = Task { try await coordinator.start(language: "en-US", saveAudio: false) }
+        while !gated.isWaiting { await Task.yield() }
+        gated.release()
+        try await next.value
+        XCTAssertEqual(coordinator.state, .recording)
+    }
+
     func testRecoveryClosesUnfinishedSessions() throws {
         let open = TranscriptSession(localeIdentifier: "en-US", startedAt: t0, items: [speech("hi", 1, 5)])
         var closed = TranscriptSession(localeIdentifier: "en-US", startedAt: t0)

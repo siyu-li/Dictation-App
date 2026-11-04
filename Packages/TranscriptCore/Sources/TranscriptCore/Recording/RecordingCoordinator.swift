@@ -39,6 +39,9 @@ public final class RecordingCoordinator {
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var hasUnsavedChanges = false
     @ObservationIgnored private var openGapID: UUID?
+    /// Bumped by every start and by `cancelStart()`, so a start that finishes
+    /// after being cancelled knows to shut the engine down again.
+    @ObservationIgnored private var startGeneration = 0
 
     public init(
         store: any SessionStoring,
@@ -76,6 +79,8 @@ public final class RecordingCoordinator {
         openGapID = nil
         hasUnsavedChanges = false
         state = .starting
+        startGeneration += 1
+        let generation = startGeneration
         let newSession = TranscriptSession(localeIdentifier: language, startedAt: now())
         session = newSession
         do {
@@ -85,6 +90,14 @@ public final class RecordingCoordinator {
                 audioDirectory: saveAudio ? store.audioDirectory(for: newSession.id) : nil
             )
             let events = try await engine.start(configuration)
+            guard generation == startGeneration else {
+                // Cancelled while the engine was starting: shut it down again.
+                log?.log("Engine started after cancel; stopping it", category: "recorder")
+                let drain = Task { for await _ in events {} }
+                await engine.stop()
+                await drain.value
+                return
+            }
             state = .recording
             log?.log("Recording started: \(newSession.id) language=\(language) saveAudio=\(saveAudio)", category: "recorder")
             eventTask = Task { [weak self] in
@@ -95,6 +108,8 @@ public final class RecordingCoordinator {
             }
             startAutosave()
         } catch {
+            // After cancelStart() everything is already cleaned up.
+            guard generation == startGeneration else { return }
             log?.log("Start failed: \(error)", category: "recorder")
             try? store.delete(id: newSession.id)
             session = nil
@@ -102,6 +117,19 @@ public final class RecordingCoordinator {
             lastError = Self.message(for: error)
             throw error
         }
+    }
+
+    /// Gives up on a start that is taking too long (e.g. a slow first-time
+    /// speech model download). The empty session is discarded; if the engine
+    /// finishes starting later, it is stopped right away.
+    public func cancelStart() {
+        guard state == .starting else { return }
+        startGeneration += 1
+        if let id = session?.id { try? store.delete(id: id) }
+        session = nil
+        volatileText = ""
+        state = .idle
+        log?.log("Start cancelled by the user", category: "recorder")
     }
 
     /// Stops recording, waits for the last results, saves and returns the
@@ -298,17 +326,30 @@ public enum SessionRecovery {
     @discardableResult
     public static func recoverUnfinished(in store: any SessionStoring, log: DiagnosticsLog? = nil) -> Int {
         guard let sessions = try? store.listSessions() else { return 0 }
+        return recoverUnfinished(sessions, store: store, log: log).recovered
+    }
+
+    /// Recovers unfinished sessions in an already-loaded list (saving each one)
+    /// and returns the updated list, so the app reads the store only once at launch.
+    public static func recoverUnfinished(
+        _ sessions: [TranscriptSession],
+        store: any SessionStoring,
+        log: DiagnosticsLog? = nil
+    ) -> (sessions: [TranscriptSession], recovered: Int) {
         var count = 0
-        for session in sessions where !session.isFinished {
+        let updated = sessions.map { session -> TranscriptSession in
+            guard !session.isFinished else { return session }
             let recovered = session.recoveredIfUnfinished()
             do {
                 try store.save(recovered)
                 count += 1
                 log?.log("Recovered unfinished session \(session.id)", category: "recovery")
+                return recovered
             } catch {
                 log?.log("Recovery failed for \(session.id): \(error)", category: "recovery")
+                return session
             }
         }
-        return count
+        return (updated, count)
     }
 }

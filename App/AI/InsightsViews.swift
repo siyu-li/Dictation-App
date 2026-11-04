@@ -55,7 +55,7 @@ struct InsightsSection: View {
                 .foregroundStyle(.orange)
         } else {
             if let estimate = model.insights.estimate(for: session, format: model.settings.formatOptions) {
-                Text("About \(estimate.tokens.formatted()) tokens · up to ~\(estimate.cost, format: .currency(code: "USD")) with \(model.insights.settings.model.displayName). Sends this transcript's text to Anthropic.")
+                Text("About \(estimate.tokens.formatted()) tokens, typically around \(estimate.cost, format: .currency(code: "USD")) with \(model.insights.settings.model.displayName). Sends this transcript's text to Anthropic.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -121,8 +121,11 @@ private struct InsightsContent: View {
     private var footer: String {
         var parts = [insights.model, insights.generatedAt.formatted(date: .abbreviated, time: .shortened)]
         if let input = insights.inputTokens, let output = insights.outputTokens {
-            let cost = (ClaudeModel(rawValue: insights.model) ?? .default).cost(inputTokens: input, outputTokens: output)
-            parts.append("\(input.formatted()) in / \(output.formatted()) out tokens ≈ \(cost.formatted(.currency(code: "USD")))")
+            var usage = "\(input.formatted()) in / \(output.formatted()) out tokens"
+            if let cost = ClaudePricing.cost(modelID: insights.model, inputTokens: input, outputTokens: output) {
+                usage += " ≈ \(cost.formatted(.currency(code: "USD")))"
+            }
+            parts.append(usage)
         }
         return parts.joined(separator: " · ")
     }

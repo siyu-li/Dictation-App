@@ -10,6 +10,9 @@ public enum ClaudeAPIError: Error, Equatable, LocalizedError {
     case emptyResponse
     case invalidOutput(String)
     case network(String)
+    /// The connection failed after Claude had started answering. Not retried
+    /// automatically, because a retry is billed again.
+    case streamInterrupted(String)
 
     /// Worth retrying automatically (rate limits, overload, server errors).
     public var isRetryable: Bool {
@@ -54,6 +57,8 @@ public enum ClaudeAPIError: Error, Equatable, LocalizedError {
             return "Couldn't read Claude's answer (\(detail)). Try again."
         case .network(let detail):
             return "Network problem: \(detail)"
+        case .streamInterrupted(let detail):
+            return "The connection dropped while Claude was writing (\(detail)). Tap Try again."
         }
     }
 

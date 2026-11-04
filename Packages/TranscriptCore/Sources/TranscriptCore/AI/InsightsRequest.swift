@@ -31,9 +31,9 @@ public struct InsightsRequest: Sendable {
         TokenEstimate.tokens(for: transcriptText) + TokenEstimate.tokens(for: Self.systemPrompt) + 600
     }
 
-    /// Upper-end cost estimate in USD, assuming up to ~8k output tokens
-    /// (thinking included).
-    public var estimatedMaxCost: Double {
+    /// Typical cost in USD, assuming ~8k output tokens (thinking included).
+    /// A rough guide, not a limit.
+    public var estimatedCost: Double {
         model.cost(inputTokens: estimatedInputTokens, outputTokens: 8_000)
     }
 

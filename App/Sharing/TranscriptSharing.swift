@@ -32,14 +32,25 @@ enum TranscriptSharing {
     /// A folder named after the session (e.g. `2026-11-04 1402 Team meeting`)
     /// containing `transcript.md`, `transcript.txt` and a `photos` folder with
     /// the session's photos. Returns the folder URL to share (e.g. Save to Files).
-    static func exportFolder(for session: TranscriptSession, store: FileSessionStore, settings: AppSettings) throws -> URL {
+    /// The files are written off the main thread (a talk can have many photos).
+    static func exportFolder(for session: TranscriptSession, store: FileSessionStore, settings: AppSettings) async throws -> URL {
+        let options = settings.exportOptions
+        return try await Task.detached(priority: .userInitiated) {
+            try writeExportFolder(for: session, store: store, options: options)
+        }.value
+    }
+
+    nonisolated private static func writeExportFolder(
+        for session: TranscriptSession,
+        store: FileSessionStore,
+        options: ExportOptions
+    ) throws -> URL {
         let fm = FileManager.default
         removeOldExports()
         let folder = try makeExportContainer()
             .appending(path: TranscriptExporter.suggestedFileName(for: session), directoryHint: .isDirectory)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
 
-        let options = settings.exportOptions
         let markdown = TranscriptExporter.markdown(for: session, options: options) { "photos/\($0.fileName)" }
         try Data(markdown.utf8).write(to: folder.appending(path: "transcript.md"), options: .atomic)
         let text = TranscriptExporter.plainText(for: session, options: options)
@@ -61,8 +72,8 @@ enum TranscriptSharing {
 
     /// The export folder as one `.zip` file, for apps that don't accept
     /// folders (Mail, Messages, AirDrop to non-Apple devices).
-    static func exportZip(for session: TranscriptSession, store: FileSessionStore, settings: AppSettings) throws -> URL {
-        let folder = try exportFolder(for: session, store: store, settings: settings)
+    static func exportZip(for session: TranscriptSession, store: FileSessionStore, settings: AppSettings) async throws -> URL {
+        let folder = try await exportFolder(for: session, store: store, settings: settings)
         let zipURL = folder.deletingLastPathComponent().appending(path: folder.lastPathComponent + ".zip")
         var coordinationError: NSError?
         var copyError: Error?
@@ -90,7 +101,7 @@ enum TranscriptSharing {
     }
 
     /// Deletes exports older than an hour (the share sheet is long done with them).
-    static func removeOldExports(olderThan age: TimeInterval = 3600) {
+    nonisolated static func removeOldExports(olderThan age: TimeInterval = 3600) {
         let fm = FileManager.default
         let directory = AppPaths.exportsDirectory
         guard let entries = try? fm.contentsOfDirectory(
@@ -106,7 +117,7 @@ enum TranscriptSharing {
     }
 
     /// A unique, empty folder inside the exports directory.
-    private static func makeExportContainer() throws -> URL {
+    nonisolated private static func makeExportContainer() throws -> URL {
         let container = AppPaths.exportsDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
         return container
