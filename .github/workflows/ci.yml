@@ -52,3 +52,15 @@ jobs:
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             -quiet
+      - name: Package unsigned IPA (for sideloading with your own Apple ID)
+        run: |
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R DerivedData/Build/Products/Release-iphoneos/Dictation.app ipa/Payload/
+          (cd ipa && zip -qry ../Dictation-unsigned.ipa Payload)
+          ls -lh Dictation-unsigned.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dictation-unsigned-ipa
+          path: Dictation-unsigned.ipa
+          retention-days: 30
