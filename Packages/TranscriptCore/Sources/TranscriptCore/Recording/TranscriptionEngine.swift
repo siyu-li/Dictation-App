@@ -19,8 +19,10 @@ public enum TranscriptionEvent: Sendable, Equatable {
     /// Finalized text for a phrase. Clears the volatile text.
     case final(text: String, start: Date, end: Date)
     /// Audio capture stopped because something else took the microphone
-    /// (phone call, Siri, another app recording). The engine tries to resume
-    /// by itself and sends `resumed` when it does.
+    /// (phone call, Siri, another app recording). Sent after the interrupted
+    /// run's last `final` results, so any volatile text left over at this
+    /// point will never be finalized. The engine tries to resume by itself
+    /// and sends `resumed` when it does.
     case interrupted(at: Date, reason: String)
     case resumed(at: Date)
     /// An audio file (inside `TranscriptionConfiguration.audioDirectory`) was opened.

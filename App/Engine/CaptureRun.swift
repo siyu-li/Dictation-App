@@ -29,6 +29,16 @@ final class CaptureRun: @unchecked Sendable {
     private var inputFinished = false
     private var captureStarted = false
     private var conversionFailures = 0
+    /// Set when audio stopped arriving for a while and then came back. The
+    /// analyzer's timeline only counts audio it received, so feeding it more
+    /// would shift every later timestamp; the run stops taking audio and the
+    /// engine starts a new run (with a fresh time anchor) instead.
+    private var discontinuityDetected = false
+    private var onDiscontinuity: (@Sendable (Date) -> Void)?
+
+    /// Longer than this between two buffers counts as a pause in the audio.
+    /// Buffers normally arrive every ~0.1 s.
+    private static let maxBufferGap: TimeInterval = 1.5
 
     init(
         id: Int,
@@ -87,6 +97,12 @@ final class CaptureRun: @unchecked Sendable {
         }
     }
 
+    /// Called (once, from the audio thread) with the time of the last good
+    /// buffer when the audio paused and resumed.
+    func setDiscontinuityHandler(_ handler: @escaping @Sendable (Date) -> Void) {
+        lock.withLock { onDiscontinuity = handler }
+    }
+
     var hasReceivedAudio: Bool {
         lock.withLock { firstAudioDate != nil }
     }
@@ -135,15 +151,15 @@ final class CaptureRun: @unchecked Sendable {
     private func process(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
-        guard !inputFinished, buffer.frameLength > 0 else { return }
+        guard !inputFinished, !discontinuityDetected, buffer.frameLength > 0 else { return }
 
         let now = Date()
-        if firstAudioDate == nil {
-            // The first buffer started recording one buffer-length ago.
-            let duration = Double(buffer.frameLength) / buffer.format.sampleRate
-            firstAudioDate = now.addingTimeInterval(-duration)
+        if let last = lastAudio, now.timeIntervalSince(last) > Self.maxBufferGap {
+            discontinuityDetected = true
+            log.log("Run \(id): audio paused for \(String(format: "%.1f", now.timeIntervalSince(last))) s; this run stops taking audio", category: "engine")
+            onDiscontinuity?(last)
+            return
         }
-        lastAudio = now
 
         let converted: AVAudioPCMBuffer
         do {
@@ -156,6 +172,14 @@ final class CaptureRun: @unchecked Sendable {
             return
         }
         input.yield(AnalyzerInput(buffer: converted))
+        // Only audio the analyzer actually received counts, so a converter
+        // that keeps failing looks like a stall (and gets recovered).
+        if firstAudioDate == nil {
+            // The first buffer started recording one buffer-length ago.
+            let duration = Double(buffer.frameLength) / buffer.format.sampleRate
+            firstAudioDate = now.addingTimeInterval(-duration)
+        }
+        lastAudio = now
 
         if let file = audioFile {
             do {

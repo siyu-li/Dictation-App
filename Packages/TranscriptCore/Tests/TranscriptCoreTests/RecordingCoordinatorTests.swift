@@ -92,6 +92,24 @@ final class RecordingCoordinatorTests: XCTestCase {
         XCTAssertEqual(gaps.first?.end, at(50))
     }
 
+    func testUnfinishedTextIsKeptAndSavedAtInterruption() async throws {
+        try await coordinator.start(language: "en-US", saveAudio: false)
+        let id = try XCTUnwrap(coordinator.session?.id)
+        coordinator.handle(.final(text: "First sentence.", start: at(1), end: at(3)))
+        coordinator.handle(.volatile("so the budget for next quarter is"))
+        coordinator.handle(.interrupted(at: at(20), reason: "Phone call"))
+        XCTAssertEqual(coordinator.volatileText, "")
+
+        let saved = try store.load(id: id)
+        XCTAssertEqual(saved.speechSegments.map(\.text), ["First sentence.", "so the budget for next quarter is"])
+        XCTAssertEqual(saved.speechSegments.last?.start, at(3))
+        XCTAssertEqual(saved.speechSegments.last?.end, at(20))
+
+        // A late final while interrupted is saved immediately, not at the next autosave.
+        coordinator.handle(.final(text: "Late result.", start: at(18), end: at(19)))
+        XCTAssertTrue(try store.load(id: id).speechSegments.map(\.text).contains("Late result."))
+    }
+
     func testStopWhileInterruptedClosesGap() async throws {
         try await coordinator.start(language: "en-US", saveAudio: false)
         coordinator.handle(.interrupted(at: at(20), reason: "Camera"))

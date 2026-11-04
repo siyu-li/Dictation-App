@@ -196,9 +196,13 @@ public final class RecordingCoordinator {
             guard !trimmed.isEmpty else { return }
             session?.insert(.speech(SpeechSegment(text: trimmed, start: start, end: end)))
             hasUnsavedChanges = true
+            // While interrupted the app may be suspended or killed before the
+            // next autosave, so save late results right away.
+            if case .interrupted = state { saveNow() }
         case .interrupted(let at, let reason):
             log?.log("Interrupted: \(reason)", category: "recorder")
-            volatileText = ""
+            // The interrupted run is over; text it never finalized is kept.
+            keepVolatileText(endingAt: at)
             if openGapID == nil {
                 let gap = AudioGap(start: at, reason: reason)
                 openGapID = gap.id
@@ -225,6 +229,17 @@ public final class RecordingCoordinator {
             log?.log("Engine failed: \(message)", category: "engine")
             lastError = message
         }
+    }
+
+    /// Saves in-progress text that will never be finalized as a speech
+    /// segment ending at `end`.
+    private func keepVolatileText(endingAt end: Date) {
+        let leftover = volatileText.trimmingCharacters(in: .whitespacesAndNewlines)
+        volatileText = ""
+        guard !leftover.isEmpty, let current = session else { return }
+        let start = min(current.speechSegments.last?.end ?? current.startedAt, end)
+        session?.insert(.speech(SpeechSegment(text: leftover, start: start, end: end)))
+        hasUnsavedChanges = true
     }
 
     /// The event stream ended. During `stop()` that is expected; otherwise the

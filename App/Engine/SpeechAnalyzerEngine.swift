@@ -61,8 +61,23 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
     // MARK: - TranscriptionEngine
 
     func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
-        // Let any work from a previous session finish first.
-        await transitionTail?.value
+        // Starting runs in the serial queue too: notifications that arrive
+        // while starting (a call ringing as the user taps Start) are handled
+        // right after, in order, instead of racing the first run.
+        let box = StartResultBox()
+        await serialized { await self.startLocked(configuration, into: box) }
+        return try box.result()
+    }
+
+    private func startLocked(_ configuration: TranscriptionConfiguration, into box: StartResultBox) async {
+        do {
+            box.set(.success(try await startBody(configuration)))
+        } catch {
+            box.set(.failure(error))
+        }
+    }
+
+    private func startBody(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
         guard !isActive else { throw SpeechEngineError.alreadyRunning }
 
         isActive = true
@@ -90,6 +105,8 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             )
             try ensureCurrent(gen)
             model = resolved
+            // Listen for interruptions before the first run starts so none are missed.
+            addObservers(gen: gen)
             do {
                 try await startRun()
             } catch {
@@ -112,12 +129,12 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
                 let gotAudio = await Self.waitForAudio(run.capture, timeout: Self.resumeAudioTimeout)
                 if !gotAudio { logEngine("Warning: no audio in the first \(Int(Self.resumeAudioTimeout)) s") }
             }
-            addObservers(gen: gen)
             startHealthChecks(gen: gen)
             continuation.yield(.status("Transcribing with \(resolved.kind.rawValue), locale \(resolved.locale.identifier)"))
             return stream
         } catch {
             logEngine("Start failed: \(EngineDescribe.error(error))")
+            removeObservers()
             if let run = currentRun {
                 currentRun = nil
                 await finalizeRun(run)
@@ -205,12 +222,15 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         let resultsTask = Task {
             do {
                 try await Self.consumeResults(module: module, capture: capture, events: events)
-                await self.runResultsEnded(runID: runID, error: nil)
+                self.runResultsEnded(runID: runID, error: nil)
             } catch {
-                await self.runResultsEnded(runID: runID, error: error)
+                self.runResultsEnded(runID: runID, error: error)
             }
         }
 
+        capture.setDiscontinuityHandler { lastGoodAudio in
+            Task { await self.enqueueDiscontinuity(runID: runID, lastGoodAudio: lastGoodAudio) }
+        }
         do {
             try capture.startCapture()
             guard isActive, !isStopping else { throw CancellationError() }
@@ -257,17 +277,17 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
                 log.log("Run \(runID): finalize failed: \(EngineDescribe.error(error))", category: "engine")
             }
         }
-        // Don't let a stuck analyzer block stop() forever.
-        let watchdog = Task {
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-            log.log("Run \(runID): finalizing took over 20 s; cancelling", category: "engine")
+        // Don't let a stuck analyzer block stop() forever: wait at most 20 s,
+        // then move on even if the tasks ignore cancellation.
+        let finished = await Self.waitAtMost(seconds: 20) {
+            await finalize.value
+            await resultsTask.value
+        }
+        if !finished {
+            log.log("Run \(runID): finalizing took over 20 s; giving up on its last results", category: "engine")
             finalize.cancel()
             resultsTask.cancel()
         }
-        await finalize.value
-        await resultsTask.value
-        watchdog.cancel()
 
         if let fileName = run.capture.finishAudioFile() {
             events?.yield(.audioFileFinished(fileName: fileName, at: run.capture.lastAudioDate ?? Date()))
@@ -330,6 +350,23 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
 
     private func enqueueAppBecameActive(gen: Int) async {
         await serialized { await self.appBecameActiveLocked(gen: gen) }
+    }
+
+    private func enqueueDiscontinuity(runID: Int, lastGoodAudio: Date) async {
+        await serialized { await self.discontinuityLocked(runID: runID, lastGoodAudio: lastGoodAudio) }
+    }
+
+    /// Audio paused and came back on the same run (e.g. the Camera app used
+    /// the mic without an interruption). Mark the gap and start a fresh run so
+    /// timestamps stay right.
+    private func discontinuityLocked(runID: Int, lastGoodAudio: Date) async {
+        guard isActive, !isStopping, let run = currentRun, run.id == runID else { return }
+        logEngine("Run \(runID): audio paused and resumed; starting a new run")
+        let gen = generation
+        await interruptLocked(at: lastGoodAudio, reason: "The microphone paused (another app may have used it)")
+        if await !attemptResumeLocked(trigger: "audio resumed after a pause") {
+            scheduleRetries(gen: gen, initialDelay: 2)
+        }
     }
 
     private func enqueueConfigurationChange(runID: Int) async {
@@ -422,16 +459,19 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         scheduleRetries(gen: gen, initialDelay: 5)
     }
 
-    /// Marks the session interrupted (one `interrupted` event per gap) and
-    /// closes the current run so its last results are delivered.
+    /// Closes the current run (delivering its last results) and then marks
+    /// the session interrupted (one `interrupted` event per gap). Reporting
+    /// after the run's last results lets the coordinator keep any text that
+    /// was never finalized, without risking duplicates, and save right away.
     private func interruptLocked(at date: Date, reason: String) async {
-        if !isInterrupted {
-            isInterrupted = true
-            events?.yield(.interrupted(at: date, reason: reason))
-        }
+        let shouldReport = !isInterrupted
+        isInterrupted = true
         if let run = currentRun {
             currentRun = nil
             await finalizeRun(run)
+        }
+        if shouldReport {
+            events?.yield(.interrupted(at: date, reason: reason))
         }
     }
 
@@ -476,7 +516,7 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { return }
                 await self.serialized { await self.retryLocked(gen: gen) }
-                if await !self.needsResume(gen: gen) { return }
+                if !self.needsResume(gen: gen) { return }
                 delay = min(delay * 2, 60)
             }
         }
@@ -611,5 +651,57 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
 
     private nonisolated func logEngine(_ message: String) {
         log.log(message, category: "engine")
+    }
+}
+
+/// Hands the result of a serialized start back to `start(_:)`.
+private final class StartResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<AsyncStream<TranscriptionEvent>, Error>?
+
+    func set(_ result: Result<AsyncStream<TranscriptionEvent>, Error>) {
+        lock.withLock { value = result }
+    }
+
+    func result() throws -> AsyncStream<TranscriptionEvent> {
+        try (lock.withLock { value } ?? .failure(CancellationError())).get()
+    }
+}
+
+/// Resumes a continuation exactly once.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    init(_ continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: Bool) {
+        let continuation = lock.withLock { () -> CheckedContinuation<Bool, Never>? in
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: value)
+    }
+}
+
+extension SpeechAnalyzerEngine {
+    /// Runs `work` and returns true if it finished within `seconds`, false
+    /// otherwise. Unlike a task group, it doesn't wait for work that never
+    /// finishes.
+    static func waitAtMost(seconds: Double, _ work: @escaping @Sendable () async -> Void) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let once = ResumeOnce(continuation)
+            let timer = Task {
+                try? await Task.sleep(for: .seconds(seconds))
+                once.resume(false)
+            }
+            Task {
+                await work()
+                timer.cancel()
+                once.resume(true)
+            }
+        }
     }
 }
