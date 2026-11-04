@@ -59,6 +59,29 @@ Xcode again. The $99/year Apple Developer Program makes installs last a year.
 
 After pulling new changes, run `xcodegen generate` again before building.
 
+## Save to Apple Notes
+
+Apps can't write into Apple Notes directly, so Dictation hands the transcript
+to a Shortcut. Create it once:
+
+1. Open the **Shortcuts** app → **+** (new shortcut). Name it exactly
+   **Dictation to Notes** (or another name, and enter that name in
+   Dictation's Settings).
+2. Add the action **Get Dictation Transcript**. Tap its **Session ID** field and
+   choose **Shortcut Input**.
+3. Add the Notes action **Create Note**, with the body set to the result of
+   *Get Dictation Transcript*. Pick a folder if you like.
+
+Then in Dictation:
+
+- Tap **Send to Notes** on a transcript; the Shortcut runs and creates the note.
+  The first line of the transcript (its title) becomes the note's title.
+- Or turn on **Send to Notes after stopping** in Settings to do it
+  automatically each time you stop a recording.
+
+Running the Shortcut by hand (without a Session ID) uses your most recent
+finished recording. "Hey Siri, get transcript from Dictation" works too.
+
 ## Project layout
 
 ```

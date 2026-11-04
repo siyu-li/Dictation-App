@@ -16,7 +16,7 @@ final class AppModel {
     private(set) var sessions: [TranscriptSession] = []
 
     init() {
-        let root = URL.applicationSupportDirectory.appending(path: "Dictation", directoryHint: .isDirectory)
+        let root = AppPaths.root
         let log = DiagnosticsLog(fileURL: root.appending(path: "diagnostics.log"))
         let store = FileSessionStore(rootDirectory: root)
         self.log = log
