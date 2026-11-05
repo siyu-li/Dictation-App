@@ -156,6 +156,40 @@ struct TranscriptBlocksList: View, Equatable {
             && (lhs.onPhotoTap == nil) == (rhs.onPhotoTap == nil)
     }
 
+    /// Scroll target of the chapter heading with this index (chapters sorted by start).
+    static func chapterAnchor(_ index: Int) -> String {
+        "chapter-\(index)"
+    }
+
+    private enum RowKind {
+        case chapter(Chapter)
+        case block(TranscriptBlock)
+    }
+
+    private struct Row: Identifiable {
+        let id: String
+        let kind: RowKind
+    }
+
+    /// Blocks with a chapter heading before the first paragraph at or after
+    /// each chapter's start.
+    private static func rows(blocks: [TranscriptBlock], chapters: [Chapter]) -> [Row] {
+        let sorted = chapters.sorted { $0.start < $1.start }
+        var next = 0
+        var rows: [Row] = []
+        rows.reserveCapacity(blocks.count + sorted.count)
+        for block in blocks {
+            if case .paragraph(let paragraph) = block {
+                while next < sorted.count, sorted[next].start <= paragraph.start {
+                    rows.append(Row(id: chapterAnchor(next), kind: .chapter(sorted[next])))
+                    next += 1
+                }
+            }
+            rows.append(Row(id: block.id.uuidString, kind: .block(block)))
+        }
+        return rows
+    }
+
     var body: some View {
         let blocks = TranscriptFormatter.blocks(for: session.items, options: options)
         ForEach(Self.rows(blocks: blocks, chapters: session.insights?.chapters ?? [])) { row in
