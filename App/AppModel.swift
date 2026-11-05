@@ -11,10 +11,14 @@ final class AppModel {
     let store: FileSessionStore
     let log: DiagnosticsLog
     let recorder: RecordingCoordinator
-    /// AI title/summary generation (Claude).
+    /// AI title/summary generation (ChatGPT, Claude, Gemini or Qwen).
     let insights: InsightsService
     /// The recording on the Lock Screen.
     let liveActivity: LiveActivityController
+    /// Microphone loudness for the recording screen's level meter.
+    let audioLevel: AudioLevelMeter
+    /// Reads slide text from photos in the background.
+    let slideText: SlideTextRecognizer
 
     /// Saved sessions, newest first.
     private(set) var sessions: [TranscriptSession] = []
@@ -29,7 +33,14 @@ final class AppModel {
         self.log = log
         self.store = store
         self.settings = AppSettings()
-        self.recorder = RecordingCoordinator(store: store, engine: SpeechAnalyzerEngine(log: log), log: log)
+        let audioLevel = AudioLevelMeter()
+        self.audioLevel = audioLevel
+        self.slideText = SlideTextRecognizer(log: log)
+        self.recorder = RecordingCoordinator(
+            store: store,
+            engine: SpeechAnalyzerEngine(log: log, levelMeter: audioLevel),
+            log: log
+        )
         self.insights = InsightsService(settings: AISettings(), log: log)
         self.liveActivity = LiveActivityController(recorder: recorder, log: log)
 
@@ -113,13 +124,36 @@ final class AppModel {
             return 0
         }
         let known = Set(latest.photos.compactMap(\.libraryIdentifier))
-        var added = 0
+        var addedPhotos: [PhotoAttachment] = []
         for photo in newPhotos where !(photo.libraryIdentifier.map(known.contains) ?? false) {
             latest.insert(.photo(photo))
-            added += 1
+            addedPhotos.append(photo)
         }
         update(latest)
-        return added
+        for photo in addedPhotos {
+            recognizeSlideText(in: photo, sessionID: id)
+        }
+        return addedPhotos.count
+    }
+
+    /// Reads the text on a photo in the background and stores it with the
+    /// photo: in the recording if it's still running, otherwise in the latest
+    /// saved session.
+    func recognizeSlideText(in photo: PhotoAttachment, sessionID: UUID) {
+        let url = store.photoURL(sessionID: sessionID, fileName: photo.fileName)
+        let photoID = photo.id
+        let recognizer = slideText
+        Task { [weak self] in
+            guard let text = await recognizer.recognizeText(at: url) else { return }
+            guard let self else { return }
+            if self.recorder.setRecognizedText(text, forPhoto: photoID) {
+                self.log.log("Slide text recognized for a photo (\(text.count) characters)", category: "vision")
+                return
+            }
+            guard var latest = self.session(id: sessionID), latest.setRecognizedText(text, forPhoto: photoID) else { return }
+            self.update(latest)
+            self.log.log("Slide text recognized for a saved photo (\(text.count) characters)", category: "vision")
+        }
     }
 
     // MARK: - Recording
