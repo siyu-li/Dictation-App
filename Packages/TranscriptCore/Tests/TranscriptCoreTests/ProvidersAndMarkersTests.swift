@@ -188,3 +188,29 @@ final class ChatCompletionsTests: XCTestCase {
                        .http(status: 400, type: "INVALID_ARGUMENT", message: "API key not valid"))
     }
 }
+
+final class ReviewFixesTests: XCTestCase {
+    func testNoCreditIsNotRetriedAndExplained() {
+        let body = Data(#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}"#.utf8)
+        let error = AIServiceError.fromResponse(status: 429, body: body)
+        XCTAssertFalse(error.isRetryable)
+        XCTAssertTrue(error.errorDescription?.contains("no credit left") == true, error.errorDescription ?? "")
+        XCTAssertTrue(error.errorDescription?.contains("check your plan") == true)
+        XCTAssertTrue(AIServiceError.fromResponse(status: 429, body: Data()).isRetryable, "a plain rate limit is still retried")
+        XCTAssertFalse(AIServiceError.http(status: 402, type: nil, message: nil).errorDescription?.contains("Anthropic") == true)
+    }
+
+    func testPricingForDatedSnapshots() {
+        XCTAssertEqual(ModelPricing.cost(modelID: "gpt-6.1-sol-2026-09-01", inputTokens: 1_000_000, outputTokens: 0), 2)
+        XCTAssertEqual(ModelPricing.cost(modelID: "claude-opus-5-5", inputTokens: 1_000_000, outputTokens: 0), 4)
+        XCTAssertNil(ModelPricing.cost(modelID: "gpt-6.1-solar", inputTokens: 1, outputTokens: 1))
+    }
+
+    func testOpenAIRefusalIsReported() {
+        var acc = ChatCompletionStreamAccumulator()
+        acc.consume(line: #"data: {"choices":[{"delta":{"refusal":"I can't help with that."}}]}"#)
+        acc.consume(line: #"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#)
+        acc.consume(line: "data: [DONE]")
+        XCTAssertThrowsError(try acc.finalText()) { XCTAssertEqual($0 as? AIServiceError, .refusal(category: nil)) }
+    }
+}

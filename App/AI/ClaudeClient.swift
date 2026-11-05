@@ -62,10 +62,16 @@ struct ClaudeClient: Sendable {
         // retried automatically: a retry would be billed again. The user can
         // tap Try again.
         var accumulator = ClaudeStreamAccumulator()
+        // Progress roughly every 2 KB, not on every streamed token.
+        var lastReported = 0
         do {
             for try await line in bytes.lines {
                 accumulator.consume(line: line)
-                progress(accumulator.text.count)
+                let received = accumulator.text.utf8.count
+                if received - lastReported >= 2_000 {
+                    lastReported = received
+                    progress(received)
+                }
             }
         } catch {
             throw AIServiceError.streamInterrupted(error.localizedDescription)

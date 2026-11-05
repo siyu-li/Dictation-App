@@ -146,57 +146,14 @@ struct TranscriptBlocksList: View, Equatable {
     var onPhotoTap: ((PhotoAttachment) -> Void)?
 
     static func == (lhs: TranscriptBlocksList, rhs: TranscriptBlocksList) -> Bool {
+        // Comparing the item arrays is instant when nothing changed (same
+        // storage) and catches every edit (new speech, slide text, gaps).
         lhs.session.id == rhs.session.id
-            && lhs.session.items.count == rhs.session.items.count
-            && lhs.session.items.last == rhs.session.items.last
+            && lhs.session.items == rhs.session.items
             && lhs.session.insights == rhs.session.insights
             && lhs.options == rhs.options
             && lhs.style == rhs.style
             && (lhs.onPhotoTap == nil) == (rhs.onPhotoTap == nil)
-            && recognizedPhotoCount(lhs.session) == recognizedPhotoCount(rhs.session)
-    }
-
-    /// Slide text arrives after a photo was added, without changing the item count.
-    private static func recognizedPhotoCount(_ session: TranscriptSession) -> Int {
-        var count = 0
-        for item in session.items {
-            if case .photo(let photo) = item, photo.recognizedText != nil { count += 1 }
-        }
-        return count
-    }
-
-    /// Scroll target of the chapter heading with this index (chapters sorted by start).
-    static func chapterAnchor(_ index: Int) -> String {
-        "chapter-\(index)"
-    }
-
-    private enum RowKind {
-        case chapter(Chapter)
-        case block(TranscriptBlock)
-    }
-
-    private struct Row: Identifiable {
-        let id: String
-        let kind: RowKind
-    }
-
-    /// Blocks with a chapter heading before the first paragraph at or after
-    /// each chapter's start.
-    private static func rows(blocks: [TranscriptBlock], chapters: [Chapter]) -> [Row] {
-        let sorted = chapters.sorted { $0.start < $1.start }
-        var next = 0
-        var rows: [Row] = []
-        rows.reserveCapacity(blocks.count + sorted.count)
-        for block in blocks {
-            if case .paragraph(let paragraph) = block {
-                while next < sorted.count, sorted[next].start <= paragraph.start {
-                    rows.append(Row(id: chapterAnchor(next), kind: .chapter(sorted[next])))
-                    next += 1
-                }
-            }
-            rows.append(Row(id: block.id.uuidString, kind: .block(block)))
-        }
-        return rows
     }
 
     var body: some View {

@@ -1,6 +1,7 @@
 import ActivityKit
 import Foundation
 import TranscriptCore
+import UIKit
 
 /// Shows the recording on the Lock Screen (Live Activity) and keeps it
 /// current while the phone is locked.
@@ -14,13 +15,20 @@ final class LiveActivityController {
 
     private static let checkInterval: Duration = .seconds(5)
     private static let captionInterval: TimeInterval = 15
+    /// The banner is pushed at least this often, so its stale date keeps moving.
+    private static let refreshInterval: TimeInterval = 30
+    /// If the app stops updating (crash, killed by iOS), the Lock Screen shows
+    /// "not recording" after this long instead of a recording that isn't running.
+    private static let staleAfter: TimeInterval = 75
 
     private let recorder: RecordingCoordinator
     private let log: DiagnosticsLog
     private var activity: Activity<RecordingActivityAttributes>?
     private var lastState: State?
     private var lastCaptionUpdate = Date.distantPast
+    private var lastPush = Date.distantPast
     private var checkTask: Task<Void, Never>?
+    private var terminateObserver: NSObjectProtocol?
 
     init(recorder: RecordingCoordinator, log: DiagnosticsLog) {
         self.recorder = recorder
@@ -42,6 +50,15 @@ final class LiveActivityController {
         for leftover in Activity<RecordingActivityAttributes>.activities {
             Task { await leftover.end(nil, dismissalPolicy: .immediate) }
         }
+
+        // Best effort when the app is closed (swiped away) mid-recording.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.end() }
+        }
     }
 
     /// Starts the Live Activity for the recording that just started.
@@ -59,11 +76,12 @@ final class LiveActivityController {
         do {
             activity = try Activity.request(
                 attributes: attributes,
-                content: ActivityContent(state: state, staleDate: nil),
+                content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter)),
                 pushType: nil
             )
             lastState = state
             lastCaptionUpdate = Date()
+            lastPush = Date()
             startChecking()
             log.log("Live Activity started", category: "live-activity")
         } catch {
@@ -104,17 +122,22 @@ final class LiveActivityController {
         update()
     }
 
-    /// Pushes a new state if anything visible changed. The caption only
-    /// refreshes every `captionInterval` seconds.
+    /// Pushes a new state if anything visible changed (the caption at most
+    /// every `captionInterval`), and at least every `refreshInterval` so the
+    /// stale date keeps moving while the recording runs.
     private func update() {
         guard let activity else { return }
-        let captionDue = Date().timeIntervalSince(lastCaptionUpdate) >= Self.captionInterval
+        let now = Date()
+        let captionDue = now.timeIntervalSince(lastCaptionUpdate) >= Self.captionInterval
         let caption = captionDue ? currentCaption() : (lastState?.caption ?? "")
         let state = currentState(caption: caption)
-        guard state != lastState else { return }
-        if state.caption != lastState?.caption { lastCaptionUpdate = Date() }
+        let refreshDue = now.timeIntervalSince(lastPush) >= Self.refreshInterval
+        guard state != lastState || refreshDue else { return }
+        if state.caption != lastState?.caption { lastCaptionUpdate = now }
         lastState = state
-        Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+        lastPush = now
+        let content = ActivityContent(state: state, staleDate: now.addingTimeInterval(Self.staleAfter))
+        Task { await activity.update(content) }
     }
 
     private func currentState(caption: String) -> State {

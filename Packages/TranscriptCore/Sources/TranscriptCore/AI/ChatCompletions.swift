@@ -85,6 +85,8 @@ public struct ChatCompletionsRequest: Sendable {
 /// ending with `data: [DONE]`).
 public struct ChatCompletionStreamAccumulator: Sendable {
     public private(set) var text = ""
+    /// Set when the model declined (OpenAI sends `delta.refusal` with strict schemas).
+    public private(set) var refusal = ""
     public private(set) var model: String?
     public private(set) var finishReason: String?
     public private(set) var inputTokens: Int?
@@ -111,8 +113,9 @@ public struct ChatCompletionStreamAccumulator: Sendable {
         }
         if let model = event["model"] as? String { self.model = model }
         if let choices = event["choices"] as? [[String: Any]], let choice = choices.first {
-            if let delta = choice["delta"] as? [String: Any], let content = delta["content"] as? String {
-                text += content
+            if let delta = choice["delta"] as? [String: Any] {
+                if let content = delta["content"] as? String { text += content }
+                if let refusal = delta["refusal"] as? String { self.refusal += refusal }
             }
             if let reason = choice["finish_reason"] as? String { finishReason = reason }
         }
@@ -125,6 +128,7 @@ public struct ChatCompletionStreamAccumulator: Sendable {
     /// The final text, or the reason there is none.
     public func finalText() throws -> String {
         if let streamError { throw streamError }
+        if !refusal.isEmpty { throw AIServiceError.refusal(category: nil) }
         switch finishReason {
         case "length": throw AIServiceError.truncated
         case "content_filter": throw AIServiceError.refusal(category: "content_filter")

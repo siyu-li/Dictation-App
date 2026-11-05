@@ -130,9 +130,7 @@ final class AppModel {
             addedPhotos.append(photo)
         }
         update(latest)
-        for photo in addedPhotos {
-            recognizeSlideText(in: photo, sessionID: id)
-        }
+        recognizeSlideText(in: addedPhotos, sessionID: id)
         return addedPhotos.count
     }
 
@@ -140,19 +138,34 @@ final class AppModel {
     /// photo: in the recording if it's still running, otherwise in the latest
     /// saved session.
     func recognizeSlideText(in photo: PhotoAttachment, sessionID: UUID) {
-        let url = store.photoURL(sessionID: sessionID, fileName: photo.fileName)
-        let photoID = photo.id
+        recognizeSlideText(in: [photo], sessionID: sessionID)
+    }
+
+    /// Reads the text on several photos one after another, then stores all
+    /// results at once (one save, one redraw) for a session that isn't recording.
+    func recognizeSlideText(in photos: [PhotoAttachment], sessionID: UUID) {
+        guard !photos.isEmpty else { return }
+        let jobs = photos.map { (id: $0.id, url: store.photoURL(sessionID: sessionID, fileName: $0.fileName)) }
         let recognizer = slideText
         Task { [weak self] in
-            guard let text = await recognizer.recognizeText(at: url) else { return }
-            guard let self else { return }
-            if self.recorder.setRecognizedText(text, forPhoto: photoID) {
-                self.log.log("Slide text recognized for a photo (\(text.count) characters)", category: "vision")
-                return
+            var results: [(id: UUID, text: String)] = []
+            for job in jobs {
+                if let text = await recognizer.recognizeText(at: job.url) { results.append((job.id, text)) }
             }
-            guard var latest = self.session(id: sessionID), latest.setRecognizedText(text, forPhoto: photoID) else { return }
+            guard let self, !results.isEmpty else { return }
+            var pending: [(id: UUID, text: String)] = []
+            for result in results where !self.recorder.setRecognizedText(result.text, forPhoto: result.id) {
+                pending.append(result)
+            }
+            if pending.count < results.count {
+                self.log.log("Slide text recognized for \(results.count - pending.count) photo(s) in the recording", category: "vision")
+            }
+            guard !pending.isEmpty, var latest = self.session(id: sessionID) else { return }
+            var changed = 0
+            for result in pending where latest.setRecognizedText(result.text, forPhoto: result.id) { changed += 1 }
+            guard changed > 0 else { return }
             self.update(latest)
-            self.log.log("Slide text recognized for a saved photo (\(text.count) characters)", category: "vision")
+            self.log.log("Slide text recognized for \(changed) saved photo(s)", category: "vision")
         }
     }
 

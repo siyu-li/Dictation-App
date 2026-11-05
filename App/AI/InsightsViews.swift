@@ -16,7 +16,7 @@ struct InsightsSection: View {
                 case .running(let count):
                     HStack(spacing: 8) {
                         ProgressView()
-                        Text(count == 0 ? "Claude is reading the transcript…" : "Writing summary… (\(count) characters)")
+                        Text(count == 0 ? "Reading the transcript…" : "Writing the summary…")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -210,7 +210,7 @@ struct AISettingsSection: View {
         } header: {
             Text("AI summaries")
         } footer: {
-            Text("Get a \(provider.shortName) API key at \(provider.keyWebsite). Keys are stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text (and its photos, if included) is sent to \(provider.shortName); nothing is sent otherwise. Leave Model empty to use \(provider.defaultModel).")
+            Text("Get a \(provider.shortName) API key at \(provider.keyWebsite). Keys are stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text (and its photos, if included) is sent to \(provider.shortName); nothing is sent otherwise." + (provider == .claude ? "" : " Leave Model empty to use \(provider.defaultModel)."))
         }
         .onChange(of: provider) { keyDraft = "" }
     }

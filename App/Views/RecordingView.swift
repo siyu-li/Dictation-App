@@ -109,27 +109,10 @@ struct RecordingView: View {
         }
     }
 
-    /// The last few lines of the live transcript. Tap to see more.
+    /// The last few lines of the live transcript. Tap to see more. A separate
+    /// view, so frequent caption updates only redraw this strip.
     private var captionStrip: some View {
-        Button {
-            showLiveTranscript = true
-        } label: {
-            let caption = recorder.captionTail(maxCharacters: 400)
-            Text(caption.isEmpty ? "Listening…" : caption)
-                .font(.title3)
-                .foregroundStyle(caption.isEmpty ? HierarchicalShapeStyle.secondary : HierarchicalShapeStyle.primary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                // Bottom-aligned and clipped, so the newest words are always visible.
-                .frame(maxWidth: .infinity, minHeight: captionHeight, maxHeight: captionHeight, alignment: .bottomLeading)
-                .clipped()
-                .padding(14)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Live captions")
-        .accessibilityValue(recorder.captionTail(maxCharacters: 200))
-        .accessibilityHint("Shows the full live transcript")
+        CaptionStrip(height: captionHeight) { showLiveTranscript = true }
     }
 
     private var infoLine: some View {
@@ -373,7 +356,7 @@ struct LiveTranscriptView: View {
                                 )
                                 .equatable()
                             }
-                            LiveVolatileText()
+                            LiveVolatileText(follow: follow, proxy: proxy, bottomID: bottomID)
                         }
                         Color.clear
                             .frame(height: 1)
@@ -382,9 +365,6 @@ struct LiveTranscriptView: View {
                     .padding()
                 }
                 .onAppear { proxy.scrollTo(bottomID, anchor: .bottom) }
-                .onChange(of: recorder.volatileText) {
-                    if follow { proxy.scrollTo(bottomID, anchor: .bottom) }
-                }
                 .onChange(of: recorder.session?.items.count) {
                     if follow { proxy.scrollTo(bottomID, anchor: .bottom) }
                 }
@@ -408,15 +388,51 @@ struct LiveTranscriptView: View {
 }
 
 /// The in-progress (not yet final) caption text. Its own view so that its
-/// frequent updates don't re-render the whole transcript.
+/// frequent updates don't re-render the whole transcript; it also keeps the
+/// newest words in view.
 private struct LiveVolatileText: View {
     @Environment(RecordingCoordinator.self) private var recorder
+    let follow: Bool
+    let proxy: ScrollViewProxy
+    let bottomID: String
 
     var body: some View {
-        if !recorder.volatileText.isEmpty {
-            Text(recorder.volatileText)
-                .foregroundStyle(.secondary)
-                .italic()
+        VStack(alignment: .leading, spacing: 0) {
+            if !recorder.volatileText.isEmpty {
+                Text(recorder.volatileText)
+                    .foregroundStyle(.secondary)
+                    .italic()
+            }
         }
+        .onChange(of: recorder.volatileText) {
+            if follow { proxy.scrollTo(bottomID, anchor: .bottom) }
+        }
+    }
+}
+
+/// The small live caption box on the recording screen.
+private struct CaptionStrip: View {
+    @Environment(RecordingCoordinator.self) private var recorder
+    let height: CGFloat
+    let onTap: () -> Void
+
+    var body: some View {
+        let caption = recorder.captionTail(maxCharacters: 400)
+        Button(action: onTap) {
+            Text(caption.isEmpty ? "Listening…" : caption)
+                .font(.title3)
+                .foregroundStyle(caption.isEmpty ? HierarchicalShapeStyle.secondary : HierarchicalShapeStyle.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                // Bottom-aligned and clipped, so the newest words are always visible.
+                .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .bottomLeading)
+                .clipped()
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Live captions")
+        .accessibilityValue(String(caption.suffix(200)))
+        .accessibilityHint("Shows the full live transcript")
     }
 }

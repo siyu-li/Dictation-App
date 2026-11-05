@@ -57,10 +57,16 @@ struct ChatCompletionsClient: Sendable {
         }
 
         var accumulator = ChatCompletionStreamAccumulator()
+        // Progress roughly every 2 KB, not on every streamed token.
+        var lastReported = 0
         do {
             for try await line in bytes.lines {
                 accumulator.consume(line: line)
-                progress(accumulator.text.count)
+                let received = accumulator.text.utf8.count
+                if received - lastReported >= 2_000 {
+                    lastReported = received
+                    progress(received)
+                }
             }
         } catch {
             throw AIServiceError.streamInterrupted(error.localizedDescription)

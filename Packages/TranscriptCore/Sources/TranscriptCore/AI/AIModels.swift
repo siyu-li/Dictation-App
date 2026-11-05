@@ -117,6 +117,20 @@ public enum ClaudeModel: String, CaseIterable, Codable, Sendable, Identifiable {
 /// request cost. Unknown models show no cost.
 public enum ModelPricing {
     public static func rates(forModelID id: String) -> (input: Double, output: Double)? {
+        if let rates = exactRates(forModelID: id) { return rates }
+        // Dated snapshots, e.g. "gpt-6.1-sol-2026-09-01" → "gpt-6.1-sol".
+        for known in knownModelIDs where id.hasPrefix(known + "-") {
+            return exactRates(forModelID: known)
+        }
+        return nil
+    }
+
+    private static let knownModelIDs = ClaudeModel.allCases.map(\.rawValue) + [
+        "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6",
+        "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "qwen/qwen3.5-397b-a17b",
+    ].sorted { $0.count > $1.count } // longest first, so "claude-opus-5-5" wins over "claude-opus-5"
+
+    private static func exactRates(forModelID id: String) -> (input: Double, output: Double)? {
         if let model = ClaudeModel(rawValue: id) {
             return (model.inputPricePerMillion, model.outputPricePerMillion)
         }

@@ -49,6 +49,27 @@ struct RecordingLockScreenView: View {
     let context: ActivityViewContext<RecordingActivityAttributes>
 
     var body: some View {
+        if context.isStale {
+            // The app stopped updating (closed or killed): don't pretend it's recording.
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Not recording")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Open Dictation to check the recording.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+        } else {
+            liveBody
+        }
+    }
+
+    private var liveBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 StatusDot(isPaused: context.state.isPaused)

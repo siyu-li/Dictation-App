@@ -18,9 +18,11 @@ public enum AIServiceError: Error, Equatable, LocalizedError {
     public var isRetryable: Bool {
         switch self {
         case .http(let status, let type, _):
-            status == 429 || status >= 500 || type == "overloaded_error" || type == "api_error" || type == "rate_limit_error"
-        case .network: true
-        default: false
+            // No credit left is reported as 429 by OpenAI; retrying won't help.
+            if type == "insufficient_quota" { return false }
+            return status == 429 || status >= 500 || type == "overloaded_error" || type == "api_error" || type == "rate_limit_error"
+        case .network: return true
+        default: return false
         }
     }
 
@@ -32,8 +34,10 @@ public enum AIServiceError: Error, Equatable, LocalizedError {
             switch (status, type ?? "") {
             case (401, _), (_, "authentication_error"):
                 return "The API key was rejected. Check it in Settings."
+            case (_, "insufficient_quota"):
+                return "Your API account has no credit left. API use is billed separately from a ChatGPT or Claude subscription: add credit on the provider's website, then try again." + Self.detail(message)
             case (402, _), (_, "billing_error"):
-                return "Your Anthropic account has a billing problem (out of credit?)."
+                return "Your API account has a billing problem (out of credit?)." + Self.detail(message)
             case (403, _), (_, "permission_error"):
                 return "This API key isn't allowed to use that model."
             case (404, _), (_, "not_found_error"):
@@ -41,7 +45,7 @@ public enum AIServiceError: Error, Equatable, LocalizedError {
             case (413, _), (_, "request_too_large"):
                 return "This transcript is too long to send in one request."
             case (429, _), (_, "rate_limit_error"):
-                return "Too many requests right now. Try again in a minute."
+                return "Too many requests right now. Try again in a minute." + Self.detail(message)
             case (529, _), (_, "overloaded_error"):
                 return "The AI service is busy right now. Try again in a few minutes."
             default:
@@ -60,6 +64,12 @@ public enum AIServiceError: Error, Equatable, LocalizedError {
         case .streamInterrupted(let detail):
             return "The connection dropped while the AI was writing (\(detail)). Tap Try again."
         }
+    }
+
+    /// The server's own explanation, appended in parentheses.
+    private static func detail(_ message: String?) -> String {
+        guard let message = message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else { return "" }
+        return " (\(message.prefix(200)))"
     }
 
     /// Parses an API error body: `{"error":{"type":...,"message":...}}`
