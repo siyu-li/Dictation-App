@@ -211,3 +211,82 @@ final class InsightsParserTests: XCTestCase {
         XCTAssertThrowsError(try InsightsResponseParser.parse("not json", request: request))
     }
 }
+
+final class InsightsPhotoTests: XCTestCase {
+    private func sessionWithPhotos() -> (TranscriptSession, PhotoAttachment, PhotoAttachment, PhotoAttachment) {
+        var s = TranscriptSession(localeIdentifier: "en-US", startedAt: t0)
+        s.insert(speech("Here is the budget slide.", 1, 3))
+        let p1 = PhotoAttachment(takenAt: at(5), fileName: "a.jpg", source: .camera)
+        let p2 = PhotoAttachment(takenAt: at(20), fileName: "b.jpg", source: .camera)
+        let unsent = PhotoAttachment(takenAt: at(30), fileName: "c.jpg", source: .photoLibrary)
+        s.insert(.photo(p1))
+        s.insert(.photo(p2))
+        s.insert(.photo(unsent))
+        s.insert(speech("Next topic.", 40, 41))
+        s.endedAt = at(60)
+        return (s, p1, p2, unsent)
+    }
+
+    func testPhotosAreLabelledAttachedAndNumberedInTranscript() throws {
+        let (s, p1, p2, _) = sessionWithPhotos()
+        let photos = [
+            InsightsPhoto(id: p2.id, takenAt: p2.takenAt, jpegData: Data([2]), pixelWidth: 1568, pixelHeight: 1176),
+            InsightsPhoto(id: p1.id, takenAt: p1.takenAt, jpegData: Data([1]), pixelWidth: 1000, pixelHeight: 750),
+            // Not part of the session: ignored.
+            InsightsPhoto(id: UUID(), takenAt: at(50), jpegData: Data([9]), pixelWidth: 10, pixelHeight: 10),
+        ]
+        let request = try InsightsRequest(session: s, timeZone: utc, photos: photos)
+        XCTAssertEqual(request.photoIDs, [p1.id, p2.id])
+        XCTAssertTrue(request.transcriptText.contains("[Photo 1 taken 14:00]"), request.transcriptText)
+        XCTAssertTrue(request.transcriptText.contains("[Photo 2 taken 14:00]"), request.transcriptText)
+        XCTAssertTrue(request.transcriptText.contains("[Photo taken 14:00]"), "the photo that wasn't sent keeps a plain marker")
+        // 1000x750 → 36×27 patches; 1568x1176 → 56×42 patches.
+        XCTAssertEqual(request.photoTokens, 972 + 2352)
+        XCTAssertGreaterThan(request.estimatedInputTokens, request.photoTokens)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+        let content = try XCTUnwrap(messages[0]["content"] as? [[String: Any]])
+        XCTAssertEqual(content.count, 5)
+        XCTAssertEqual(content[0]["text"] as? String, "Photo 1 (taken 14:00):")
+        XCTAssertEqual(content[1]["type"] as? String, "image")
+        let source = try XCTUnwrap(content[1]["source"] as? [String: Any])
+        XCTAssertEqual(source["type"] as? String, "base64")
+        XCTAssertEqual(source["media_type"] as? String, "image/jpeg")
+        XCTAssertEqual(source["data"] as? String, Data([1]).base64EncodedString())
+        XCTAssertEqual(content[2]["text"] as? String, "Photo 2 (taken 14:00):")
+        XCTAssertEqual(content[4]["type"] as? String, "text")
+        XCTAssertTrue((content[4]["text"] as? String)?.contains("photo(s) above") == true)
+    }
+
+    func testTooManyPhotosAreSpreadEvenly() {
+        XCTAssertEqual(InsightsRequest.spread(Array(0..<10), limit: 4), [0, 3, 6, 9])
+        XCTAssertEqual(InsightsRequest.spread([1, 2], limit: 4), [1, 2])
+        XCTAssertEqual(InsightsRequest.spread(Array(0..<100), limit: InsightsRequest.maxPhotos).count, InsightsRequest.maxPhotos)
+    }
+
+    func testPhotoNotesAreParsedAndExported() throws {
+        var (s, p1, _, _) = sessionWithPhotos()
+        let photo = InsightsPhoto(id: p1.id, takenAt: p1.takenAt, jpegData: Data([1]), pixelWidth: 100, pixelHeight: 100)
+        let request = try InsightsRequest(session: s, timeZone: utc, photos: [photo])
+        let json = """
+        {"title":"T","summary":"S","key_points":[],"action_items":[],"speakers":[],"speaker_turns":[],
+         "photo_notes":[{"photo":1,"description":"Q3 budget slide"},{"photo":7,"description":"ghost"}]}
+        """
+        let insights = try InsightsResponseParser.parse(json, request: request, now: t0)
+        XCTAssertEqual(insights.photoNotes, [PhotoNote(photoID: p1.id, text: "Q3 budget slide")])
+        XCTAssertEqual(insights.note(forPhoto: p1.id), "Q3 budget slide")
+
+        s.insights = insights
+        let text = TranscriptExporter.plainText(for: s, options: ExportOptions(timeZone: utc))
+        XCTAssertTrue(text.contains("[14:00] 📷 Photo — Q3 budget slide"), text)
+        let md = TranscriptExporter.markdown(for: s, options: ExportOptions(timeZone: utc))
+        XCTAssertTrue(md.contains("*Q3 budget slide*"), md)
+    }
+
+    func testOlderInsightsWithoutPhotoNotesStillDecode() throws {
+        let json = #"{"title":"T","summary":"S","keyPoints":[],"actionItems":[],"speakers":[],"speakerTurns":[],"model":"m","generatedAt":0}"#
+        let decoded = try JSONDecoder().decode(SessionInsights.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.photoNotes)
+    }
+}

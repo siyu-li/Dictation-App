@@ -177,6 +177,10 @@ private struct StartRecordingBar: View {
             .controlSize(.large)
             .tint(.red)
             .disabled(recorder.isActive)
+
+            Label("While recording, tap Take photo to add slides to the transcript.", systemImage: "camera")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal)
         .padding(.top, 12)

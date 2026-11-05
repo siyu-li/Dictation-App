@@ -64,6 +64,12 @@ struct TranscriptBlockRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
+
+                if let note = session.insights?.note(forPhoto: photo.id) {
+                    Text(note)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                }
             }
 
         case .gap(let gap):

@@ -168,12 +168,14 @@ public enum InsightsResponseParser {
     private struct Raw: Decodable {
         struct Speaker: Decodable { var label: String; var description: String }
         struct Turn: Decodable { var paragraph: Int; var speaker: String }
+        struct Note: Decodable { var photo: Int; var description: String }
         var title: String
         var summary: String
         var key_points: [String]
         var action_items: [String]
         var speakers: [Speaker]
         var speaker_turns: [Turn]
+        var photo_notes: [Note]?
     }
 
     public static func parse(
@@ -201,6 +203,15 @@ public enum InsightsResponseParser {
             turns.append(SpeakerTurn(start: request.paragraphStarts[index], speaker: speaker))
         }
 
+        var photoNotes: [PhotoNote] = []
+        for note in raw.photo_notes ?? [] {
+            let index = note.photo - 1
+            let text = clean(note.description)
+            guard request.photoIDs.indices.contains(index), !text.isEmpty else { continue }
+            guard !photoNotes.contains(where: { $0.photoID == request.photoIDs[index] }) else { continue }
+            photoNotes.append(PhotoNote(photoID: request.photoIDs[index], text: text))
+        }
+
         return SessionInsights(
             title: clean(raw.title),
             summary: clean(raw.summary),
@@ -213,7 +224,8 @@ public enum InsightsResponseParser {
             model: model ?? request.model.rawValue,
             generatedAt: now,
             inputTokens: inputTokens,
-            outputTokens: outputTokens
+            outputTokens: outputTokens,
+            photoNotes: photoNotes.isEmpty ? nil : photoNotes
         )
     }
 }

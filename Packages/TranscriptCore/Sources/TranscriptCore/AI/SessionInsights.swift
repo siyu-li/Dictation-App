@@ -23,6 +23,17 @@ public struct SpeakerTurn: Codable, Equatable, Sendable {
     }
 }
 
+/// The AI's one-line description of a photo (e.g. a slide's title and point).
+public struct PhotoNote: Codable, Equatable, Sendable {
+    public var photoID: UUID
+    public var text: String
+
+    public init(photoID: UUID, text: String) {
+        self.photoID = photoID
+        self.text = text
+    }
+}
+
 /// AI-generated title, summary and speaker guesses for a session.
 public struct SessionInsights: Codable, Equatable, Sendable {
     public var title: String
@@ -38,6 +49,8 @@ public struct SessionInsights: Codable, Equatable, Sendable {
     public var generatedAt: Date
     public var inputTokens: Int?
     public var outputTokens: Int?
+    /// Descriptions of the photos that were sent (optional: older results have none).
+    public var photoNotes: [PhotoNote]?
 
     public init(
         title: String,
@@ -49,7 +62,8 @@ public struct SessionInsights: Codable, Equatable, Sendable {
         model: String,
         generatedAt: Date,
         inputTokens: Int? = nil,
-        outputTokens: Int? = nil
+        outputTokens: Int? = nil,
+        photoNotes: [PhotoNote]? = nil
     ) {
         self.title = title
         self.summary = summary
@@ -61,6 +75,12 @@ public struct SessionInsights: Codable, Equatable, Sendable {
         self.generatedAt = generatedAt
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.photoNotes = photoNotes
+    }
+
+    /// The AI's description of a photo, if it has one.
+    public func note(forPhoto id: UUID) -> String? {
+        photoNotes?.first { $0.photoID == id }?.text
     }
 
     /// The guessed speaker at a moment, if any.

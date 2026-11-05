@@ -14,11 +14,17 @@ final class AISettings {
         didSet { defaults.set(model.rawValue, forKey: "ai.model") }
     }
 
+    /// Send the session's photos (slides) to Claude along with the transcript.
+    var includePhotos: Bool {
+        didSet { defaults.set(includePhotos, forKey: "ai.includePhotos") }
+    }
+
     private(set) var hasAPIKey: Bool
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         model = ClaudeModel(rawValue: defaults.string(forKey: "ai.model") ?? "") ?? .default
+        includePhotos = defaults.object(forKey: "ai.includePhotos") as? Bool ?? true
         hasAPIKey = KeychainStore.readAPIKey() != nil
     }
 
@@ -70,19 +76,26 @@ final class InsightsService {
 
     /// Rough input size and upper-end cost, or nil if there's nothing to send.
     func estimate(for session: TranscriptSession, format: FormatOptions) -> (tokens: Int, cost: Double)? {
-        let key = "\(session.id)|\(session.items.count)|\(settings.model.rawValue)|\(format.pauseThreshold)"
+        let key = "\(session.id)|\(session.items.count)|\(settings.model.rawValue)|\(format.pauseThreshold)|\(settings.includePhotos)"
         if let cached = estimateCache[key] { return cached }
         guard let request = try? InsightsRequest(session: session, model: settings.model, format: format) else {
             return nil
         }
-        let value = (request.estimatedInputTokens, request.estimatedCost)
+        // Photos are prepared only when generating; assume ~1568×1176 each.
+        let photoCount = settings.includePhotos ? min(session.photos.count, InsightsRequest.maxPhotos) : 0
+        let photoTokens = photoCount * InsightsPhoto(
+            id: UUID(), takenAt: Date(), jpegData: Data(),
+            pixelWidth: InsightsRequest.recommendedPhotoMaxPixels, pixelHeight: InsightsRequest.recommendedPhotoMaxPixels * 3 / 4
+        ).visualTokens
+        let tokens = request.estimatedInputTokens + photoTokens
+        let value = (tokens, settings.model.cost(inputTokens: tokens, outputTokens: 8_000))
         estimateCache[key] = value
         return value
     }
 
     /// Calls Claude and returns the insights, or nil on failure (the error is
     /// available through `phase(for:)`).
-    func generate(for session: TranscriptSession, format: FormatOptions) async -> SessionInsights? {
+    func generate(for session: TranscriptSession, format: FormatOptions, store: FileSessionStore) async -> SessionInsights? {
         let id = session.id
         guard !isRunning(id) else { return nil }
         guard let apiKey = settings.apiKey() else {
@@ -99,9 +112,12 @@ final class InsightsService {
         }
         defer { backgroundTask.end() }
         do {
-            let request = try InsightsRequest(session: session, model: settings.model, format: format)
             phases[id] = .running(receivedCharacters: 0)
-            log.log("Insights: model=\(request.model.rawValue) paragraphs=\(request.paragraphStarts.count) ~\(request.estimatedInputTokens) input tokens", category: "ai")
+            let photos = settings.includePhotos
+                ? await InsightsPhotoPreparer.prepare(session.photos, sessionID: session.id, store: store)
+                : []
+            let request = try InsightsRequest(session: session, model: settings.model, format: format, photos: photos)
+            log.log("Insights: model=\(request.model.rawValue) paragraphs=\(request.paragraphStarts.count) photos=\(request.photoIDs.count) ~\(request.estimatedInputTokens) input tokens", category: "ai")
 
             let result = try await client.send(request, apiKey: apiKey) { [weak self] count in
                 Task { @MainActor in
@@ -135,7 +151,7 @@ extension AppModel {
     /// in the title if the session has none.
     func generateInsights(for sessionID: UUID) async {
         guard let session = session(id: sessionID) else { return }
-        guard let insights = await insights.generate(for: session, format: settings.formatOptions) else { return }
+        guard let insights = await insights.generate(for: session, format: settings.formatOptions, store: store) else { return }
         guard var latest = self.session(id: sessionID) else { return }
         latest.insights = insights
         if (latest.title ?? "").trimmingCharacters(in: .whitespaces).isEmpty {

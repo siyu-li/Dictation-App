@@ -140,18 +140,53 @@ struct RecordingView: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 12) {
-            BigActionButton(title: "Photo", systemImage: "camera.fill") {
+        VStack(spacing: 12) {
+            recentPhotos
+            Button {
                 showCamera = true
+            } label: {
+                Label("Take photo", systemImage: "camera.fill")
+                    .font(.title2.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 64)
             }
-            .accessibilityHint("Takes photos that are placed in the transcript at this moment")
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+            .accessibilityHint("Photos of slides go into the transcript at this moment and into the AI summary")
 
-            BigActionButton(title: "New speaker", systemImage: "person.wave.2.fill") {
+            Button {
                 markSpeaker()
+            } label: {
+                Label("New speaker", systemImage: "person.wave.2.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
+            .buttonStyle(.bordered)
             .accessibilityHint("Marks that a different person started talking")
         }
         .disabled(!recorder.isRecording)
+    }
+
+    /// The last few photos, so it's clear they went into the transcript.
+    @ViewBuilder
+    private var recentPhotos: some View {
+        if let session = recorder.session {
+            let photos = session.photos
+            if !photos.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(photos.suffix(4)) { photo in
+                        PhotoThumbnail(url: model.photoURL(photo, in: session), maxPixelSize: 160)
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    Text("\(photos.count) in transcript")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(photos.count) photos in the transcript")
+            }
+        }
     }
 
     @ViewBuilder
@@ -236,26 +271,6 @@ struct RecordingView: View {
         case .interrupted: .orange
         default: .secondary
         }
-    }
-}
-
-/// A large square-ish button with an icon above its title.
-private struct BigActionButton: View {
-    let title: String
-    let systemImage: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.title)
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-            }
-            .frame(maxWidth: .infinity, minHeight: 88)
-        }
-        .buttonStyle(.bordered)
     }
 }
 

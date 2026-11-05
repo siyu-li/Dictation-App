@@ -87,7 +87,8 @@ public enum TranscriptExporter {
             case .speakerChange(let change):
                 out.append("— \(change.label ?? "New speaker") —")
             case .photo(let photo):
-                out.append(stamp(photo.takenAt, session: session, options: options) + "📷 Photo")
+                let note = insights?.note(forPhoto: photo.id).map { " — \($0)" } ?? ""
+                out.append(stamp(photo.takenAt, session: session, options: options) + "📷 Photo" + note)
             case .gap(let gap):
                 out.append(stamp(gap.start, session: session, options: options) + gapText(gap, options: options))
             }
@@ -151,6 +152,10 @@ public enum TranscriptExporter {
                 out.append("**— \(change.label ?? "New speaker") —**")
             case .photo(let photo):
                 out.append("![Photo at \(time.clock(photo.takenAt, includeSeconds: true))](\(photoPath(photo)))")
+                if let note = insights?.note(forPhoto: photo.id) {
+                    out.append("")
+                    out.append("*\(note)*")
+                }
             case .gap(let gap):
                 out.append("> " + gapText(gap, options: options))
             }

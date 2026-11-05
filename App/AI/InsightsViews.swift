@@ -55,7 +55,9 @@ struct InsightsSection: View {
                 .foregroundStyle(.orange)
         } else {
             if let estimate = model.insights.estimate(for: session, format: model.settings.formatOptions) {
-                Text("About \(estimate.tokens.formatted()) tokens, typically around \(estimate.cost, format: .currency(code: "USD")) with \(model.insights.settings.model.displayName). Sends this transcript's text to Anthropic.")
+                let photoCount = model.insights.settings.includePhotos ? min(session.photos.count, InsightsRequest.maxPhotos) : 0
+                let photoText = photoCount == 0 ? "" : " and \(photoCount) photo\(photoCount == 1 ? "" : "s")"
+                Text("About \(estimate.tokens.formatted()) tokens, typically around \(estimate.cost, format: .currency(code: "USD")) with \(model.insights.settings.model.displayName). Sends this transcript's text\(photoText) to Anthropic.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -176,10 +178,11 @@ struct AISettingsSection: View {
                     Text(option.displayName).tag(option)
                 }
             }
+            Toggle("Include photos (slides)", isOn: Bindable(ai).includePhotos)
         } header: {
             Text("AI summaries (Claude)")
         } footer: {
-            Text("Create an API key in the Claude Console (platform.claude.com). The key is stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text is sent to Anthropic; nothing is sent otherwise. A 3-hour talk costs roughly $0.20–0.50 with Opus.")
+            Text("Create an API key in the Claude Console (platform.claude.com). The key is stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text (and its photos, if included) is sent to Anthropic; nothing is sent otherwise. A 3-hour talk costs roughly $0.20–0.50 with Opus, plus about $0.01 per photo.")
         }
     }
 }

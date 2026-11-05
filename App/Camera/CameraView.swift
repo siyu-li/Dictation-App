@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -43,6 +44,10 @@ struct CameraView: View {
                 .allowsHitTesting(false)
         }
         .statusBarHidden()
+        // The volume buttons work as a shutter, like in the Camera app.
+        .onCameraCaptureEvent { event in
+            if event.phase == .ended { shoot() }
+        }
         .sensoryFeedback(.impact(weight: .medium), trigger: shutterCount)
         .task { await prepare() }
         .onDisappear { controller?.stop() }
