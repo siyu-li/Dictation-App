@@ -9,11 +9,22 @@ nothing needs copying out by hand.
   and marks any gap in the transcript
 - Take photos of slides from inside the app; they appear in the transcript at
   the moment you took them
-- "New speaker" button, paragraphs at pauses, timestamps
+- "New speaker" and "Bookmark" buttons, paragraphs at pauses, timestamps
+- Slide text is read from photos on the phone
 - Copy, share, or send to Apple Notes through a Shortcut
 - Optional: save the audio (off by default)
-- Planned: AI title, summary and speaker guesses (Claude), high-quality
-  re-transcription from saved audio
+- AI summary: title, summary, key points, action items, chapters, guessed
+  speakers and photo descriptions, in English, 中文 or both. Choose the AI in
+  Settings: **ChatGPT** (default), Claude, Gemini, or **Qwen** (open-source,
+  via OpenRouter). You need your own API key for the one you pick; only the
+  recording you tap Generate on is sent.
+
+| AI | Get a key | Default model |
+|---|---|---|
+| ChatGPT | platform.openai.com/api-keys | `gpt-6.1-sol` |
+| Claude | platform.claude.com | `claude-opus-5-5` |
+| Gemini | aistudio.google.com/apikey | `gemini-3.8-flash` |
+| Qwen (OpenRouter) | openrouter.ai/keys | `qwen/qwen3.5-397b-a17b` |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the plan and status.
 

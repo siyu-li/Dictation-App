@@ -4,18 +4,18 @@ import TranscriptCore
 import UniformTypeIdentifiers
 
 /// Shrinks session photos for sending to Claude: at most
-/// `InsightsRequest.maxPhotos`, spread over the session, each downscaled so
-/// its long edge is `InsightsRequest.recommendedPhotoMaxPixels` (slide text
+/// `InsightsPrompt.maxPhotos`, spread over the session, each downscaled so
+/// its long edge is `InsightsPrompt.recommendedPhotoMaxPixels` (slide text
 /// stays legible, the request stays small) and re-encoded as JPEG.
 enum InsightsPhotoPreparer {
     static func prepare(_ photos: [PhotoAttachment], sessionID: UUID, store: FileSessionStore) async -> [InsightsPhoto] {
-        let chosen = InsightsRequest.spread(photos.sorted { $0.takenAt < $1.takenAt }, limit: InsightsRequest.maxPhotos)
+        let chosen = InsightsPrompt.spread(photos.sorted { $0.takenAt < $1.takenAt }, limit: InsightsPrompt.maxPhotos)
         guard !chosen.isEmpty else { return [] }
         return await Task.detached(priority: .userInitiated) {
             chosen.compactMap { photo -> InsightsPhoto? in
                 let url = store.photoURL(sessionID: sessionID, fileName: photo.fileName)
                 guard let data = try? Data(contentsOf: url),
-                      let scaled = downscale(data, maxPixelSize: InsightsRequest.recommendedPhotoMaxPixels) else {
+                      let scaled = downscale(data, maxPixelSize: InsightsPrompt.recommendedPhotoMaxPixels) else {
                     return nil
                 }
                 return InsightsPhoto(

@@ -16,7 +16,7 @@ struct ClaudeClient: Sendable {
         while true {
             do {
                 return try await sendOnce(request, apiKey: apiKey, progress: progress)
-            } catch let error as ClaudeAPIError where error.isRetryable && attempt < maxRetries {
+            } catch let error as AIServiceError where error.isRetryable && attempt < maxRetries {
                 attempt += 1
                 try await Task.sleep(for: .seconds(5 * attempt))
             }
@@ -44,10 +44,10 @@ struct ClaudeClient: Sendable {
         do {
             (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
         } catch {
-            throw ClaudeAPIError.network(error.localizedDescription)
+            throw AIServiceError.network(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
-            throw ClaudeAPIError.network("no HTTP response")
+            throw AIServiceError.network("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             var body = Data()
@@ -55,7 +55,7 @@ struct ClaudeClient: Sendable {
                 body.append(byte)
                 if body.count > 64_000 { break }
             }
-            throw ClaudeAPIError.fromResponse(status: http.statusCode, body: body)
+            throw AIServiceError.fromResponse(status: http.statusCode, body: body)
         }
 
         // From here on Claude has accepted the request, so failures are not
@@ -68,10 +68,10 @@ struct ClaudeClient: Sendable {
                 progress(accumulator.text.count)
             }
         } catch {
-            throw ClaudeAPIError.streamInterrupted(error.localizedDescription)
+            throw AIServiceError.streamInterrupted(error.localizedDescription)
         }
         if let streamError = accumulator.streamError {
-            throw ClaudeAPIError.streamInterrupted(streamError.errorDescription ?? "server error")
+            throw AIServiceError.streamInterrupted(streamError.errorDescription ?? "server error")
         }
         return accumulator
     }

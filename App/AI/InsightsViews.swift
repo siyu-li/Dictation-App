@@ -46,18 +46,20 @@ struct InsightsSection: View {
 
     @ViewBuilder
     private func intro(_ session: TranscriptSession) -> some View {
-        Text("Claude can write a title, a summary, key points and action items, and guess who was speaking.")
+        let ai = model.insights.settings
+        Text("\(ai.provider.shortName) can write a title, a summary, key points, action items and chapters, and guess who was speaking.")
             .font(.subheadline)
             .foregroundStyle(.secondary)
-        if !model.insights.settings.hasAPIKey {
-            Text("Add your Claude API key in Settings to use this.")
+        if !ai.hasAPIKey {
+            Text("Add your \(ai.provider.shortName) API key in Settings to use this.")
                 .font(.footnote)
                 .foregroundStyle(.orange)
         } else {
             if let estimate = model.insights.estimate(for: session, format: model.settings.formatOptions) {
-                let photoCount = model.insights.settings.includePhotos ? min(session.photos.count, InsightsRequest.maxPhotos) : 0
+                let photoCount = ai.includePhotos ? min(session.photos.count, InsightsPrompt.maxPhotos) : 0
                 let photoText = photoCount == 0 ? "" : " and \(photoCount) photo\(photoCount == 1 ? "" : "s")"
-                Text("About \(estimate.tokens.formatted()) tokens, typically around \(estimate.cost, format: .currency(code: "USD")) with \(model.insights.settings.model.displayName). Sends this transcript's text\(photoText) to Anthropic.")
+                let costText = estimate.cost.map { ", typically around \($0.formatted(.currency(code: "USD")))" } ?? ""
+                Text("About \(estimate.tokens.formatted()) tokens\(costText) with \(ai.modelID(for: ai.provider)). Sends this transcript's text\(photoText) to \(ai.provider.shortName).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -150,39 +152,66 @@ private struct InsightsContent: View {
     }
 }
 
-/// Settings section: API key and model.
+/// Settings section: provider, API key, model, summary language, photos.
 struct AISettingsSection: View {
     @Environment(AppModel.self) private var model
     @State private var keyDraft = ""
 
     var body: some View {
         let ai = model.insights.settings
+        let provider = ai.provider
         Section {
-            if ai.hasAPIKey {
+            Picker("AI", selection: Bindable(ai).provider) {
+                ForEach(AIProvider.allCases) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+
+            if ai.hasAPIKey(for: provider) {
                 LabeledContent("API key", value: "Saved on this iPhone")
-                Button("Remove API key", role: .destructive) {
-                    ai.setAPIKey("")
+                Button("Remove \(provider.shortName) API key", role: .destructive) {
+                    ai.setAPIKey("", for: provider)
                 }
             } else {
-                SecureField("Claude API key (sk-ant-…)", text: $keyDraft)
+                SecureField(provider.keyPlaceholder, text: $keyDraft)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Save API key") {
-                    ai.setAPIKey(keyDraft)
+                    ai.setAPIKey(keyDraft, for: provider)
                     keyDraft = ""
                 }
                 .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            Picker("Model", selection: Bindable(ai).model) {
-                ForEach(ClaudeModel.allCases) { option in
+
+            if provider == .claude {
+                Picker("Model", selection: Bindable(ai).claudeModel) {
+                    ForEach(ClaudeModel.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+            } else {
+                LabeledContent("Model") {
+                    TextField(provider.defaultModel, text: Binding(
+                        get: { ai.customModel(for: provider) },
+                        set: { ai.setCustomModel($0, for: provider) }
+                    ))
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                }
+            }
+
+            Picker("Summary language", selection: Bindable(ai).summaryLanguage) {
+                ForEach(SummaryLanguage.allCases) { option in
                     Text(option.displayName).tag(option)
                 }
             }
             Toggle("Include photos (slides)", isOn: Bindable(ai).includePhotos)
         } header: {
-            Text("AI summaries (Claude)")
+            Text("AI summaries")
         } footer: {
-            Text("Create an API key in the Claude Console (platform.claude.com). The key is stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text (and its photos, if included) is sent to Anthropic; nothing is sent otherwise. A 3-hour talk costs roughly $0.20–0.50 with Opus, plus about $0.01 per photo.")
+            Text("Get a \(provider.shortName) API key at \(provider.keyWebsite). Keys are stored in this iPhone's Keychain. When you tap Generate, that recording's transcript text (and its photos, if included) is sent to \(provider.shortName); nothing is sent otherwise. Leave Model empty to use \(provider.defaultModel).")
         }
+        .onChange(of: provider) { keyDraft = "" }
     }
 }
