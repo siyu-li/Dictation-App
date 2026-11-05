@@ -86,6 +86,25 @@ Xcode again. The $99/year Apple Developer Program makes installs last a year.
 
 After pulling new changes, run `xcodegen generate` again before building.
 
+## Download the app from GitHub Releases
+
+Every release on the repository's **Releases** page has the app attached as
+`Dictation-v<version>.ipa` (unsigned: install it with a sideloading tool such as
+Sideloadly using your own Apple ID). To publish a new release, either:
+
+- push a version tag:
+
+  ```bash
+  git tag v0.2.0 && git push origin v0.2.0
+  ```
+
+- or on GitHub open **Actions → CI → Run workflow**, pick the branch, type a
+  version such as `0.2.0`, and press **Run workflow**.
+
+The build runs the tests, builds the app with that version number, and creates
+the release with the IPA and auto-generated notes. Releases are public, like the
+repository.
+
 ## Save to Apple Notes
 
 Apps can't write into Apple Notes directly, so Dictation hands the transcript

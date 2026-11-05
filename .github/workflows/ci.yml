@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Publish a GitHub Release with the IPA, e.g. 0.2.0 (leave empty to only build)"
+        required: false
+        default: ""
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -22,8 +27,29 @@ jobs:
   ios:
     name: iOS build (macOS)
     runs-on: macos-26
+    outputs:
+      # Set when this run should publish a release: from a pushed tag like
+      # v0.2.0, or from the version typed in "Run workflow".
+      release_tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
+      - name: Work out the release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          TAG=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            TAG="v${INPUT_VERSION#v}"
+          fi
+          if [[ -n "$TAG" && ! "$TAG" =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::Release version must look like 0.2.0 (got '$TAG')"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: ${TAG:-none (build only)}"
       - name: Select Xcode 26 (the newest Xcode that also runs on Intel Macs)
         run: |
           ls -d /Applications/Xcode*.app
@@ -48,7 +74,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             -quiet
       - name: Build app for iPhone (unsigned)
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
+          # A release build carries its version number (shown in Settings → About).
+          VERSION_SETTINGS=()
+          if [[ -n "$RELEASE_TAG" ]]; then
+            VERSION_SETTINGS=(MARKETING_VERSION="${RELEASE_TAG#v}" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER")
+          fi
           xcodebuild build \
             -project Dictation.xcodeproj \
             -scheme Dictation \
@@ -56,6 +89,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
+            "${VERSION_SETTINGS[@]}" \
             -quiet
       - name: Package unsigned IPA (for sideloading with your own Apple ID)
         run: |
@@ -69,3 +103,35 @@ jobs:
           name: Dictation-unsigned-ipa
           path: Dictation-unsigned.ipa
           retention-days: 30
+
+  release:
+    name: GitHub Release
+    needs: [core-linux, ios]
+    if: needs.ios.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: Dictation-unsigned-ipa
+      - name: Name the IPA after the version
+        env:
+          TAG: ${{ needs.ios.outputs.release_tag }}
+        run: mv Dictation-unsigned.ipa "Dictation-${TAG}.ipa"
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.ios.outputs.release_tag }}
+          # Used only when the tag doesn't exist yet ("Run workflow" with a version).
+          target_commitish: ${{ github.sha }}
+          name: Dictation ${{ needs.ios.outputs.release_tag }}
+          files: Dictation-${{ needs.ios.outputs.release_tag }}.ipa
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            **Dictation-${{ needs.ios.outputs.release_tag }}.ipa** is an unsigned iPhone app for sideloading:
+            open it with a sideloading tool (for example Sideloadly) and sign it with your own Apple ID.
+            With a free Apple ID the app has to be re-installed every 7 days.
+            Building from source with Xcode is described in the README.
