@@ -106,6 +106,7 @@ final class TranscriptFormatterTests: XCTestCase {
             case .photo: "photo"
             case .speakerChange: "speaker"
             case .gap: "gap"
+            case .bookmark: "bookmark"
             }
         }
         XCTAssertEqual(kinds, ["p:Before photo", "photo", "p:After photo", "speaker", "p:New person"])

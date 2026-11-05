@@ -124,7 +124,7 @@ private struct InsightsContent: View {
         var parts = [insights.model, insights.generatedAt.formatted(date: .abbreviated, time: .shortened)]
         if let input = insights.inputTokens, let output = insights.outputTokens {
             var usage = "\(input.formatted()) in / \(output.formatted()) out tokens"
-            if let cost = ClaudePricing.cost(modelID: insights.model, inputTokens: input, outputTokens: output) {
+            if let cost = ModelPricing.cost(modelID: insights.model, inputTokens: input, outputTokens: output) {
                 usage += " ≈ \(cost.formatted(.currency(code: "USD")))"
             }
             parts.append(usage)

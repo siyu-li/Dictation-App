@@ -97,6 +97,20 @@ public struct TranscriptSession: Equatable, Sendable, Identifiable {
         items.compactMap { if case .photo(let p) = $0 { p } else { nil } }
     }
 
+    public var bookmarks: [Bookmark] {
+        items.compactMap { if case .bookmark(let b) = $0 { b } else { nil } }
+    }
+
+    /// Stores text recognized in a photo. Returns false if the photo isn't here.
+    @discardableResult
+    public mutating func setRecognizedText(_ text: String, forPhoto id: UUID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              case .photo(var photo) = items[index] else { return false }
+        photo.recognizedText = text
+        items[index] = .photo(photo)
+        return true
+    }
+
     /// All recognized text joined together, without timestamps.
     public var fullText: String {
         TextJoiner.join(speechSegments.map(\.text))

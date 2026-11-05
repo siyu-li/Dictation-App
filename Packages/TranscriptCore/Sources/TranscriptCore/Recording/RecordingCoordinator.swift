@@ -161,6 +161,24 @@ public final class RecordingCoordinator {
         saveNow()
     }
 
+    /// Marks the current moment as important (shown as ★ in the transcript
+    /// and stressed in the AI summary).
+    public func markBookmark(note: String? = nil) {
+        guard isRecording else { return }
+        session?.insert(.bookmark(Bookmark(at: now(), note: note)))
+        saveNow()
+    }
+
+    /// Stores slide text recognized in a photo of the session being recorded.
+    /// Returns false if no recording holds that photo (e.g. it already ended:
+    /// then update the saved session instead).
+    @discardableResult
+    public func setRecognizedText(_ text: String, forPhoto id: UUID) -> Bool {
+        guard session?.setRecognizedText(text, forPhoto: id) == true else { return false }
+        hasUnsavedChanges = true
+        return true
+    }
+
     /// Saves a photo into the session and places it on the timeline.
     @discardableResult
     public func addPhoto(jpegData: Data, takenAt: Date? = nil) throws -> PhotoAttachment {

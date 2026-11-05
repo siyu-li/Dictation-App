@@ -78,8 +78,13 @@ public enum TranscriptExporter {
             out.append("")
         }
         var lastSpeaker: String?
+        var chapters = ChapterCursor(insights?.chapters ?? [])
         let blocks = TranscriptFormatter.blocks(for: session.items, options: options.format)
         for (index, block) in blocks.enumerated() {
+            for chapter in chapters.starting(before: block) {
+                out.append("■ \(chapter.title)")
+                out.append("")
+            }
             switch block {
             case .paragraph(let p):
                 let speaker = speakerPrefix(for: p, insights: insights, lastSpeaker: &lastSpeaker)
@@ -91,6 +96,8 @@ public enum TranscriptExporter {
                 out.append(stamp(photo.takenAt, session: session, options: options) + "📷 Photo" + note)
             case .gap(let gap):
                 out.append(stamp(gap.start, session: session, options: options) + gapText(gap, options: options))
+            case .bookmark(let bookmark):
+                out.append(stamp(bookmark.at, session: session, options: options) + "★ Bookmark" + (bookmark.note.map { ": \($0)" } ?? ""))
             }
             // Keep a speaker marker attached to the paragraph that follows it.
             let isLast = index == blocks.count - 1
@@ -140,8 +147,13 @@ public enum TranscriptExporter {
             out.append("")
         }
         var lastSpeaker: String?
+        var chapters = ChapterCursor(insights?.chapters ?? [])
         let time = TimestampFormatter(timeZone: options.timeZone)
         for block in TranscriptFormatter.blocks(for: session.items, options: options.format) {
+            for chapter in chapters.starting(before: block) {
+                out.append("### \(chapter.title)")
+                out.append("")
+            }
             switch block {
             case .paragraph(let p):
                 let label = label(p.start, session: session, options: options)
@@ -158,6 +170,8 @@ public enum TranscriptExporter {
                 }
             case .gap(let gap):
                 out.append("> " + gapText(gap, options: options))
+            case .bookmark(let bookmark):
+                out.append("**★ Bookmark \(time.clock(bookmark.at, includeSeconds: true))**" + (bookmark.note.map { " — \($0)" } ?? ""))
             }
             out.append("")
         }
@@ -192,5 +206,27 @@ public enum TranscriptExporter {
         let range = gap.end.map { "\(time.clock(gap.start, includeSeconds: true))–\(time.clock($0, includeSeconds: true))" }
             ?? "from \(time.clock(gap.start, includeSeconds: true))"
         return "⚠︎ No audio \(range) (\(gap.reason))"
+    }
+}
+
+/// Hands out chapter headings in order as the transcript is written.
+private struct ChapterCursor {
+    private var remaining: ArraySlice<Chapter>
+
+    init(_ chapters: [Chapter]) {
+        remaining = ArraySlice(chapters.sorted { $0.start < $1.start })
+    }
+
+    /// Chapters that start at or before this paragraph (headings go only
+    /// before paragraphs, so markers don't end up under the wrong heading).
+    mutating func starting(before block: TranscriptBlock) -> [Chapter] {
+        guard case .paragraph(let paragraph) = block else { return [] }
+        var due: [Chapter] = []
+        while let next = remaining.first, next.start <= paragraph.start {
+            due.append(next)
+            remaining = remaining.dropFirst()
+        }
+        // Several chapters due at once: only the latest heading is useful.
+        return due.last.map { [$0] } ?? []
     }
 }

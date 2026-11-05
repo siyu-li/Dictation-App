@@ -1,7 +1,7 @@
 import Foundation
 
-/// Problems talking to the Claude API, with messages meant for the user.
-public enum ClaudeAPIError: Error, Equatable, LocalizedError {
+/// Problems talking to an AI service, with messages meant for the user.
+public enum AIServiceError: Error, Equatable, LocalizedError {
     case missingAPIKey
     /// Non-2xx HTTP response (or an `error` event in the stream).
     case http(status: Int, type: String?, message: String?)
@@ -10,7 +10,7 @@ public enum ClaudeAPIError: Error, Equatable, LocalizedError {
     case emptyResponse
     case invalidOutput(String)
     case network(String)
-    /// The connection failed after Claude had started answering. Not retried
+    /// The connection failed after the AI had started answering. Not retried
     /// automatically, because a retry is billed again.
     case streamInterrupted(String)
 
@@ -27,46 +27,49 @@ public enum ClaudeAPIError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Add your Claude API key in Settings first."
+            return "Add an API key for the selected AI in Settings first."
         case .http(let status, let type, let message):
             switch (status, type ?? "") {
             case (401, _), (_, "authentication_error"):
-                return "The Claude API key was rejected. Check it in Settings."
+                return "The API key was rejected. Check it in Settings."
             case (402, _), (_, "billing_error"):
                 return "Your Anthropic account has a billing problem (out of credit?)."
             case (403, _), (_, "permission_error"):
                 return "This API key isn't allowed to use that model."
             case (404, _), (_, "not_found_error"):
-                return "That Claude model isn't available to your account. Try another model in Settings."
+                return "That model isn't available to your account. Check the model in Settings."
             case (413, _), (_, "request_too_large"):
                 return "This transcript is too long to send in one request."
             case (429, _), (_, "rate_limit_error"):
                 return "Too many requests right now. Try again in a minute."
             case (529, _), (_, "overloaded_error"):
-                return "Claude is busy right now. Try again in a few minutes."
+                return "The AI service is busy right now. Try again in a few minutes."
             default:
-                return "Claude API error \(status)" + (message.map { ": \($0)" } ?? ".")
+                return "AI service error \(status)" + (message.map { ": \($0)" } ?? ".")
             }
         case .refusal:
-            return "Claude declined to process this transcript."
+            return "The AI declined to process this transcript."
         case .truncated:
             return "The answer was cut off. Try again."
         case .emptyResponse:
-            return "Claude returned an empty answer. Try again."
+            return "The AI returned an empty answer. Try again."
         case .invalidOutput(let detail):
-            return "Couldn't read Claude's answer (\(detail)). Try again."
+            return "Couldn't read the AI's answer (\(detail)). Try again."
         case .network(let detail):
             return "Network problem: \(detail)"
         case .streamInterrupted(let detail):
-            return "The connection dropped while Claude was writing (\(detail)). Tap Try again."
+            return "The connection dropped while the AI was writing (\(detail)). Tap Try again."
         }
     }
 
-    /// Parses an API error body: `{"type":"error","error":{"type":...,"message":...}}`.
-    public static func fromResponse(status: Int, body: Data) -> ClaudeAPIError {
-        let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    /// Parses an API error body: `{"error":{"type":...,"message":...}}`
+    /// (Anthropic, OpenAI, OpenRouter) or a one-element array of it (Gemini).
+    public static func fromResponse(status: Int, body: Data) -> AIServiceError {
+        let json = try? JSONSerialization.jsonObject(with: body)
+        let object = (json as? [String: Any]) ?? (json as? [[String: Any]])?.first
         let error = object?["error"] as? [String: Any]
-        return .http(status: status, type: error?["type"] as? String, message: error?["message"] as? String)
+        let type = error?["type"] as? String ?? error?["status"] as? String
+        return .http(status: status, type: type, message: error?["message"] as? String)
     }
 }
 
@@ -80,7 +83,7 @@ public struct ClaudeStreamAccumulator: Sendable {
     public private(set) var refusalCategory: String?
     public private(set) var inputTokens: Int?
     public private(set) var outputTokens: Int?
-    public private(set) var streamError: ClaudeAPIError?
+    public private(set) var streamError: AIServiceError?
     public private(set) var isComplete = false
     private var textBlockIndexes: Set<Int> = []
 
@@ -144,15 +147,15 @@ public struct ClaudeStreamAccumulator: Sendable {
     public func finalText() throws -> String {
         if let streamError { throw streamError }
         switch stopReason {
-        case "refusal": throw ClaudeAPIError.refusal(category: refusalCategory)
-        case "max_tokens": throw ClaudeAPIError.truncated
+        case "refusal": throw AIServiceError.refusal(category: refusalCategory)
+        case "max_tokens": throw AIServiceError.truncated
         default: break
         }
         guard isComplete || stopReason != nil else {
-            throw ClaudeAPIError.network("the response ended early")
+            throw AIServiceError.network("the response ended early")
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ClaudeAPIError.emptyResponse }
+        guard !trimmed.isEmpty else { throw AIServiceError.emptyResponse }
         return trimmed
     }
 
@@ -164,11 +167,15 @@ public struct ClaudeStreamAccumulator: Sendable {
 }
 
 /// Turns the model's JSON answer into `SessionInsights`.
+/// Older name, kept for existing code.
+public typealias ClaudeAPIError = AIServiceError
+
 public enum InsightsResponseParser {
     private struct Raw: Decodable {
         struct Speaker: Decodable { var label: String; var description: String }
         struct Turn: Decodable { var paragraph: Int; var speaker: String }
         struct Note: Decodable { var photo: Int; var description: String }
+        struct Section: Decodable { var paragraph: Int; var title: String }
         var title: String
         var summary: String
         var key_points: [String]
@@ -176,8 +183,10 @@ public enum InsightsResponseParser {
         var speakers: [Speaker]
         var speaker_turns: [Turn]
         var photo_notes: [Note]?
+        var chapters: [Section]?
     }
 
+    /// Claude answers.
     public static func parse(
         _ text: String,
         request: InsightsRequest,
@@ -186,12 +195,27 @@ public enum InsightsResponseParser {
         outputTokens: Int? = nil,
         now: Date = Date()
     ) throws -> SessionInsights {
+        try parse(text, prompt: request.prompt, model: model ?? request.model.rawValue,
+                  inputTokens: inputTokens, outputTokens: outputTokens, now: now)
+    }
+
+    /// Any provider's answer: JSON matching `InsightsPrompt.schema` (code
+    /// fences or text around the JSON object are tolerated).
+    public static func parse(
+        _ text: String,
+        prompt: InsightsPrompt,
+        model: String,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        now: Date = Date()
+    ) throws -> SessionInsights {
         let raw: Raw
         do {
-            raw = try JSONDecoder().decode(Raw.self, from: Data(text.utf8))
+            raw = try JSONDecoder().decode(Raw.self, from: Data(jsonObjectText(text).utf8))
         } catch {
-            throw ClaudeAPIError.invalidOutput("unexpected format")
+            throw AIServiceError.invalidOutput("unexpected format")
         }
+        let request = prompt
         func clean(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         var turns: [SpeakerTurn] = []
@@ -212,6 +236,15 @@ public enum InsightsResponseParser {
             photoNotes.append(PhotoNote(photoID: request.photoIDs[index], text: text))
         }
 
+        var chapters: [Chapter] = []
+        for section in (raw.chapters ?? []).sorted(by: { $0.paragraph < $1.paragraph }) {
+            let index = section.paragraph - 1
+            let title = clean(section.title)
+            guard request.paragraphStarts.indices.contains(index), !title.isEmpty else { continue }
+            guard !chapters.contains(where: { $0.start == request.paragraphStarts[index] }) else { continue }
+            chapters.append(Chapter(start: request.paragraphStarts[index], title: title))
+        }
+
         return SessionInsights(
             title: clean(raw.title),
             summary: clean(raw.summary),
@@ -221,11 +254,18 @@ public enum InsightsResponseParser {
                 .map { SpeakerProfile(label: clean($0.label), description: clean($0.description)) }
                 .filter { !$0.label.isEmpty },
             speakerTurns: turns,
-            model: model ?? request.model.rawValue,
+            model: model,
             generatedAt: now,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
-            photoNotes: photoNotes.isEmpty ? nil : photoNotes
+            photoNotes: photoNotes.isEmpty ? nil : photoNotes,
+            chapters: chapters.isEmpty ? nil : chapters
         )
+    }
+
+    /// The outermost `{...}` in the text (drops ```json fences and chatter).
+    static func jsonObjectText(_ text: String) -> String {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return text }
+        return String(text[start...end])
     }
 }

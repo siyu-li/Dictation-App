@@ -75,8 +75,8 @@ final class InsightsRequestTests: XCTestCase {
         XCTAssertEqual(ClaudeModel.opus.cost(inputTokens: 1_000_000, outputTokens: 0), 4.0, accuracy: 0.0001)
         XCTAssertEqual(TokenEstimate.tokens(for: "我们开会"), 4)
         XCTAssertEqual(TokenEstimate.tokens(for: "abcdefg"), 2)
-        XCTAssertEqual(ClaudePricing.cost(modelID: "claude-opus-4-8", inputTokens: 1_000_000, outputTokens: 0), 5)
-        XCTAssertNil(ClaudePricing.cost(modelID: "unknown", inputTokens: 1, outputTokens: 1))
+        XCTAssertEqual(ModelPricing.cost(modelID: "claude-opus-4-8", inputTokens: 1_000_000, outputTokens: 0), 5)
+        XCTAssertNil(ModelPricing.cost(modelID: "unknown", inputTokens: 1, outputTokens: 1))
         
     }
 }
@@ -166,7 +166,7 @@ final class ClaudeStreamTests: XCTestCase {
         let error = ClaudeAPIError.fromResponse(status: 401, body: body)
         XCTAssertEqual(error, .http(status: 401, type: "authentication_error", message: "invalid x-api-key"))
         XCTAssertFalse(error.isRetryable)
-        XCTAssertEqual(error.errorDescription, "The Claude API key was rejected. Check it in Settings.")
+        XCTAssertEqual(error.errorDescription, "The API key was rejected. Check it in Settings.")
         XCTAssertTrue(ClaudeAPIError.fromResponse(status: 503, body: Data()).isRetryable)
     }
 }

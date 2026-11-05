@@ -34,6 +34,17 @@ public struct PhotoNote: Codable, Equatable, Sendable {
     }
 }
 
+/// A topic section of a recording, starting at `start`.
+public struct Chapter: Codable, Equatable, Sendable {
+    public var start: Date
+    public var title: String
+
+    public init(start: Date, title: String) {
+        self.start = start
+        self.title = title
+    }
+}
+
 /// AI-generated title, summary and speaker guesses for a session.
 public struct SessionInsights: Codable, Equatable, Sendable {
     public var title: String
@@ -51,6 +62,8 @@ public struct SessionInsights: Codable, Equatable, Sendable {
     public var outputTokens: Int?
     /// Descriptions of the photos that were sent (optional: older results have none).
     public var photoNotes: [PhotoNote]?
+    /// Topic chapters, sorted by start (optional: older results have none).
+    public var chapters: [Chapter]?
 
     public init(
         title: String,
@@ -63,7 +76,8 @@ public struct SessionInsights: Codable, Equatable, Sendable {
         generatedAt: Date,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
-        photoNotes: [PhotoNote]? = nil
+        photoNotes: [PhotoNote]? = nil,
+        chapters: [Chapter]? = nil
     ) {
         self.title = title
         self.summary = summary
@@ -76,6 +90,7 @@ public struct SessionInsights: Codable, Equatable, Sendable {
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.photoNotes = photoNotes
+        self.chapters = chapters?.sorted { $0.start < $1.start }
     }
 
     /// The AI's description of a photo, if it has one.

@@ -45,19 +45,36 @@ public struct PhotoAttachment: Codable, Equatable, Sendable, Identifiable {
     public var source: PhotoSource
     /// `PHAsset.localIdentifier` for library imports, used to avoid importing twice.
     public var libraryIdentifier: String?
+    /// Text read from the photo on the phone (slide text), once recognized.
+    public var recognizedText: String?
 
     public init(
         id: UUID = UUID(),
         takenAt: Date,
         fileName: String,
         source: PhotoSource,
-        libraryIdentifier: String? = nil
+        libraryIdentifier: String? = nil,
+        recognizedText: String? = nil
     ) {
         self.id = id
         self.takenAt = takenAt
         self.fileName = fileName
         self.source = source
         self.libraryIdentifier = libraryIdentifier
+        self.recognizedText = recognizedText
+    }
+}
+
+/// A moment the user marked as important while recording.
+public struct Bookmark: Codable, Equatable, Sendable, Identifiable {
+    public var id: UUID
+    public var at: Date
+    public var note: String?
+
+    public init(id: UUID = UUID(), at: Date, note: String? = nil) {
+        self.id = id
+        self.at = at
+        self.note = note
     }
 }
 
@@ -83,6 +100,7 @@ public enum TimelineItem: Equatable, Sendable, Identifiable {
     case speakerChange(SpeakerChange)
     case photo(PhotoAttachment)
     case gap(AudioGap)
+    case bookmark(Bookmark)
 
     public var id: UUID {
         switch self {
@@ -90,6 +108,7 @@ public enum TimelineItem: Equatable, Sendable, Identifiable {
         case .speakerChange(let c): c.id
         case .photo(let p): p.id
         case .gap(let g): g.id
+        case .bookmark(let b): b.id
         }
     }
 
@@ -100,6 +119,7 @@ public enum TimelineItem: Equatable, Sendable, Identifiable {
         case .speakerChange(let c): c.at
         case .photo(let p): p.takenAt
         case .gap(let g): g.start
+        case .bookmark(let b): b.at
         }
     }
 
@@ -115,7 +135,7 @@ public enum TimelineItem: Equatable, Sendable, Identifiable {
 
 extension TimelineItem: Codable {
     private enum CodingKeys: String, CodingKey { case type, value }
-    private enum Kind: String, Codable { case speech, speakerChange, photo, gap }
+    private enum Kind: String, Codable { case speech, speakerChange, photo, gap, bookmark }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -124,6 +144,7 @@ extension TimelineItem: Codable {
         case .speakerChange: self = .speakerChange(try container.decode(SpeakerChange.self, forKey: .value))
         case .photo: self = .photo(try container.decode(PhotoAttachment.self, forKey: .value))
         case .gap: self = .gap(try container.decode(AudioGap.self, forKey: .value))
+        case .bookmark: self = .bookmark(try container.decode(Bookmark.self, forKey: .value))
         }
     }
 
@@ -142,6 +163,9 @@ extension TimelineItem: Codable {
         case .gap(let g):
             try container.encode(Kind.gap, forKey: .type)
             try container.encode(g, forKey: .value)
+        case .bookmark(let b):
+            try container.encode(Kind.bookmark, forKey: .type)
+            try container.encode(b, forKey: .value)
         }
     }
 }

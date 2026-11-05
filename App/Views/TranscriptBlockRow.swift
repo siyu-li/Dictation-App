@@ -72,6 +72,14 @@ struct TranscriptBlockRow: View {
                 }
             }
 
+        case .bookmark(let bookmark):
+            Label(
+                timestampLabel(bookmark.at, in: session, style: style) + " · Bookmark" + (bookmark.note.map { ": \($0)" } ?? ""),
+                systemImage: "star.fill"
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.orange)
+
         case .gap(let gap):
             Label(gapDescription(gap), systemImage: "mic.slash")
                 .font(.footnote)

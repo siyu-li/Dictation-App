@@ -28,6 +28,7 @@ public enum TranscriptBlock: Equatable, Sendable, Identifiable {
     case speakerChange(SpeakerChange)
     case photo(PhotoAttachment)
     case gap(AudioGap)
+    case bookmark(Bookmark)
 
     public var id: UUID {
         switch self {
@@ -35,6 +36,7 @@ public enum TranscriptBlock: Equatable, Sendable, Identifiable {
         case .speakerChange(let c): c.id
         case .photo(let p): p.id
         case .gap(let g): g.id
+        case .bookmark(let b): b.id
         }
     }
 
@@ -44,6 +46,7 @@ public enum TranscriptBlock: Equatable, Sendable, Identifiable {
         case .speakerChange(let c): c.at
         case .photo(let p): p.takenAt
         case .gap(let g): g.start
+        case .bookmark(let b): b.at
         }
     }
 }
@@ -95,6 +98,9 @@ public enum TranscriptFormatter {
             case .gap(let gap):
                 flush()
                 blocks.append(.gap(gap))
+            case .bookmark(let bookmark):
+                flush()
+                blocks.append(.bookmark(bookmark))
             }
         }
         flush()
