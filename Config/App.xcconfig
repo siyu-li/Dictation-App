@@ -1,0 +1,10 @@
+// Signing and bundle id for the Dictation app.
+// Don't edit this file for your own account: copy Local.xcconfig.example to
+// Local.xcconfig (ignored by git) and set your values there.
+BUNDLE_ID_PREFIX = com.example
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+
+#include? "Local.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX).dictation

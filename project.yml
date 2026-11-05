@@ -1,0 +1,87 @@
+# XcodeGen spec. Generate the Xcode project with:  xcodegen generate
+# (the .xcodeproj is not committed; regenerate after pulling changes).
+name: Dictation
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: targeted
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  TranscriptCore:
+    path: Packages/TranscriptCore
+targets:
+  Dictation:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+      # Live Activity attributes and Lock Screen button intents, shared with the extension.
+      - path: Shared
+    configFiles:
+      Debug: Config/App.xcconfig
+      Release: Config/App.xcconfig
+    dependencies:
+      - package: TranscriptCore
+      # Lock Screen Live Activity (embedded in the app's PlugIns folder).
+      - target: DictationWidgets
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Dictation
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Keeps recording and transcribing with the screen locked.
+        UIBackgroundModes: [audio]
+        # Shows the recording on the Lock Screen.
+        NSSupportsLiveActivities: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSMicrophoneUsageDescription: Dictation listens to the people talking around you to make a live transcript.
+        NSSpeechRecognitionUsageDescription: Speech is transcribed on your iPhone to create the transcript.
+        NSCameraUsageDescription: Take photos of slides while you record. Each photo is placed in the transcript at the moment you took it.
+        NSPhotoLibraryUsageDescription: Add photos you took with the Camera app during a recording to that recording's transcript.
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  DictationWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Widgets
+      - path: Shared
+    configFiles:
+      Debug: Config/Widgets.xcconfig
+      Release: Config/Widgets.xcconfig
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Dictation
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+schemes:
+  Dictation:
+    build:
+      targets:
+        Dictation: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,137 @@
+import Foundation
+@testable import TranscriptCore
+
+/// 2026-11-04 14:00:00 UTC
+let t0 = Date(timeIntervalSince1970: 1_793_800_800)
+let utc = TimeZone(identifier: "UTC")!
+
+func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+
+func speech(_ text: String, _ start: TimeInterval, _ end: TimeInterval) -> TimelineItem {
+    .speech(SpeechSegment(text: text, start: at(start), end: at(end)))
+}
+
+func makeTempDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("TranscriptCoreTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+/// A controllable clock for the coordinator.
+final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Date
+    init(_ start: Date = t0) { current = start }
+    func now() -> Date { lock.withLock { current } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { current = current.addingTimeInterval(seconds) } }
+}
+
+/// An engine driven by the test.
+final class MockEngine: TranscriptionEngine, @unchecked Sendable {
+    struct StartFailure: Error, LocalizedError {
+        var errorDescription: String? { "Microphone permission denied" }
+    }
+
+    private let lock = NSLock()
+    private var continuation: AsyncStream<TranscriptionEvent>.Continuation?
+    var startError: Error?
+    private(set) var configurations: [TranscriptionConfiguration] = []
+    /// Events delivered during `stop()` before the stream finishes, like the
+    /// last final results of a real engine.
+    var eventsOnStop: [TranscriptionEvent] = []
+    private(set) var stopCount = 0
+
+    func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
+        if let startError { throw startError }
+        let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self)
+        lock.withLock {
+            configurations.append(configuration)
+            self.continuation = continuation
+        }
+        return stream
+    }
+
+    func send(_ event: TranscriptionEvent) {
+        _ = lock.withLock { continuation }?.yield(event)
+    }
+
+    /// Simulates the engine dying.
+    func finishStream() {
+        lock.withLock { continuation }?.finish()
+    }
+
+    func stop() async {
+        let continuation = lock.withLock { () -> AsyncStream<TranscriptionEvent>.Continuation? in
+            stopCount += 1
+            return self.continuation
+        }
+        for event in eventsOnStop { continuation?.yield(event) }
+        continuation?.finish()
+    }
+}
+
+/// An engine whose `start` waits until the test calls `release()`, like a
+/// slow first-time speech model download.
+final class GatedEngine: TranscriptionEngine, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate: CheckedContinuation<Void, Never>?
+    private var continuation: AsyncStream<TranscriptionEvent>.Continuation?
+    private var stops = 0
+    private var cancels = 0
+    private var cancelled = false
+    /// Simulates an engine that already wrote an audio file before being cancelled.
+    var writesAudioFile = false
+    /// When false, `cancelStart()` is ignored (like an engine stuck in a download).
+    var honorsCancel = true
+
+    var isWaiting: Bool { lock.withLock { gate != nil } }
+    var stopCount: Int { lock.withLock { stops } }
+    var cancelCount: Int { lock.withLock { cancels } }
+
+    func start(_ configuration: TranscriptionConfiguration) async throws -> AsyncStream<TranscriptionEvent> {
+        if writesAudioFile, let directory = configuration.audioDirectory {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data([1]).write(to: directory.appendingPathComponent("run-1.m4a"))
+        }
+        await withCheckedContinuation { (gate: CheckedContinuation<Void, Never>) in
+            lock.withLock { self.gate = gate }
+        }
+        let wasCancelled = lock.withLock { () -> Bool in
+            defer { cancelled = false }
+            return cancelled
+        }
+        if wasCancelled { throw CancellationError() }
+        let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self)
+        lock.withLock { self.continuation = continuation }
+        return stream
+    }
+
+    func release() {
+        let gate = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            defer { self.gate = nil }
+            return self.gate
+        }
+        gate?.resume()
+    }
+
+    func stop() async {
+        let continuation = lock.withLock { () -> AsyncStream<TranscriptionEvent>.Continuation? in
+            stops += 1
+            return self.continuation
+        }
+        continuation?.finish()
+    }
+
+    /// Like the real engine: abandons the pending start, which then throws.
+    func cancelStart() async {
+        let gate = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            cancels += 1
+            guard honorsCancel else { return nil }
+            cancelled = true
+            defer { self.gate = nil }
+            return self.gate
+        }
+        gate?.resume()
+    }
+}
