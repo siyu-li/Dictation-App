@@ -35,41 +35,9 @@ struct SessionDetailView: View {
         }
     }
 
+    // Split into parts so the compiler can type-check each one quickly.
     private func content(for session: TranscriptSession) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    header(for: session)
-                    if !session.speechSegments.isEmpty {
-                        InsightsSection(sessionID: session.id)
-                    }
-                    if let chapters = session.insights?.chapters, !chapters.isEmpty {
-                        ChaptersCard(chapters: chapters, session: session, style: settings.timestampStyle) { index in
-                            withAnimation { proxy.scrollTo(TranscriptBlocksList.chapterAnchor(index), anchor: .top) }
-                        }
-                    }
-                    if session.items.isEmpty {
-                        Text("Nothing was transcribed in this recording.")
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 24)
-                    } else {
-                        Label("Long-press a paragraph, bookmark or speaker to edit.", systemImage: "hand.tap")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    TranscriptBlocksList(
-                        session: session,
-                        options: settings.formatOptions,
-                        style: settings.timestampStyle,
-                        photoURL: { model.photoURL($0, in: session) },
-                        onPhotoTap: { viewerPhoto = $0 },
-                        onEdit: { handle($0) }
-                    )
-                    .equatable()
-                }
-                .padding()
-            }
-        }
+        let screen = transcriptScroll(for: session)
         .navigationTitle(TranscriptExporter.displayTitle(for: session))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -116,7 +84,41 @@ struct SessionDetailView: View {
         .fullScreenCover(item: $viewerPhoto) { photo in
             PhotoViewer(url: model.photoURL(photo, in: session), takenAt: photo.takenAt)
         }
-        .toast($toastMessage)
+            .toast($toastMessage)
+        return withEditingDialogs(screen)
+    }
+
+    private func transcriptScroll(for session: TranscriptSession) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    header(for: session)
+                    if !session.speechSegments.isEmpty {
+                        InsightsSection(sessionID: session.id)
+                    }
+                    if let chapters = session.insights?.chapters, !chapters.isEmpty {
+                        ChaptersCard(chapters: chapters, session: session, style: settings.timestampStyle) { index in
+                            withAnimation { proxy.scrollTo(TranscriptBlocksList.chapterAnchor(index), anchor: .top) }
+                        }
+                    }
+                    TranscriptHint(isEmpty: session.items.isEmpty)
+                    TranscriptBlocksList(
+                        session: session,
+                        options: settings.formatOptions,
+                        style: settings.timestampStyle,
+                        photoURL: { model.photoURL($0, in: session) },
+                        onPhotoTap: { viewerPhoto = $0 },
+                        onEdit: { handle($0) }
+                    )
+                    .equatable()
+                }
+                .padding()
+            }
+        }
+    }
+
+    private func withEditingDialogs<Content: View>(_ content: Content) -> some View {
+        content
         .sheet(item: $editingParagraph) { paragraph in
             ParagraphEditor(text: paragraph.text) { newText in
                 model.editSession(sessionID) { $0.replaceParagraph(segmentIDs: paragraph.segmentIDs, with: newText) }
@@ -523,5 +525,22 @@ private struct ParagraphEditor: View {
                 .onAppear { focused = true }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+/// "Nothing transcribed" or the editing tip above the transcript.
+private struct TranscriptHint: View {
+    let isEmpty: Bool
+
+    var body: some View {
+        if isEmpty {
+            Text("Nothing was transcribed in this recording.")
+                .foregroundStyle(.secondary)
+                .padding(.top, 24)
+        } else {
+            Label("Long-press a paragraph, bookmark or speaker to edit.", systemImage: "hand.tap")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
