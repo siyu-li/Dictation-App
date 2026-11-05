@@ -106,6 +106,19 @@ Then in Dictation:
 Running the Shortcut by hand (without a Session ID) uses your most recent
 finished recording. "Hey Siri, get transcript from Dictation" works too.
 
+## Lock Screen controls
+
+While recording, the Lock Screen shows the recording: Recording/Paused,
+the elapsed time, the latest caption line, photo and bookmark counts, and
+two buttons — **New speaker** and **Bookmark** — that work without
+unlocking. Tap the banner to open the app (for example to take a slide
+photo). It disappears as soon as you stop.
+
+This comes from a small widget extension (`Widgets/`) that is part of the
+app. Xcode signs it automatically with the same team as the app (its id is
+`<your prefix>.dictation.widgets`). If the banner doesn't appear, check
+**Settings → Dictation → Live Activities** on the iPhone.
+
 ## Project layout
 
 ```
@@ -115,6 +128,10 @@ App/                      iPhone app (SwiftUI)
   Camera/                 in-app camera
   Sharing/                export, Notes shortcut, photo import
   Intents/                Shortcuts actions
+  LiveActivity/           keeps the Lock Screen display up to date
+Shared/                   Live Activity data + Lock Screen button actions
+                          (compiled into the app and the extension)
+Widgets/                  Lock Screen (Live Activity) extension
 Packages/TranscriptCore/  all app logic that doesn't need iOS: data model,
                           formatting, export, storage, recording coordinator
 project.yml               XcodeGen spec for the Xcode project

@@ -35,7 +35,9 @@ summary, saved to Apple Notes with as few taps as possible.
   service (better Chinese, mixed English/Chinese, voice-based speaker labels)
 
 ### 4. Polish
-- Lock Screen Live Activity with elapsed time and the latest line
+- ✅ Lock Screen Live Activity with elapsed time, the latest line, photo and
+  bookmark counts, and New speaker / Bookmark buttons (`Widgets/`, `Shared/`,
+  `App/LiveActivity/`)
 - Battery and storage checks for 3-hour sessions
 
 ## Review loop

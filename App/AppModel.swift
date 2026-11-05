@@ -13,6 +13,8 @@ final class AppModel {
     let recorder: RecordingCoordinator
     /// AI title/summary generation (Claude).
     let insights: InsightsService
+    /// The recording on the Lock Screen.
+    let liveActivity: LiveActivityController
 
     /// Saved sessions, newest first.
     private(set) var sessions: [TranscriptSession] = []
@@ -29,6 +31,7 @@ final class AppModel {
         self.settings = AppSettings()
         self.recorder = RecordingCoordinator(store: store, engine: SpeechAnalyzerEngine(log: log), log: log)
         self.insights = InsightsService(settings: AISettings(), log: log)
+        self.liveActivity = LiveActivityController(recorder: recorder, log: log)
 
         log.log("App launched", category: "app")
         do {
@@ -38,6 +41,7 @@ final class AppModel {
             log.log("Listing sessions failed: \(error)", category: "app")
         }
         recorder.onSessionFinished = { [weak self] finished in
+            self?.liveActivity.end()
             self?.upsert(finished)
         }
     }
@@ -136,16 +140,19 @@ final class AppModel {
         startTask = task
         await task.value
         startTask = nil
+        liveActivity.start()
     }
 
     /// Cancels a start that's taking too long (e.g. the first speech model download).
     func cancelStart() {
         recorder.cancelStart()
         startTask?.cancel()
+        liveActivity.end()
     }
 
     @discardableResult
     func stopRecording() async -> TranscriptSession? {
-        await recorder.stop()
+        liveActivity.end()
+        return await recorder.stop()
     }
 }
