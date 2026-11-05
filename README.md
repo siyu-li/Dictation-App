@@ -4,6 +4,10 @@ An iPhone app that live-captions the people talking in a room and keeps the
 **whole transcript**, even for 2–3 hour talks. It saves as it goes, so
 nothing needs copying out by hand.
 
+| Home | Recording | Lock Screen | Transcript |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.webp" width="200" alt="Home screen with saved recordings, language switch and Record button"> | <img src="docs/screenshots/recording.webp" width="200" alt="Recording screen with live captions, Slide photo, New speaker, Bookmark and Stop"> | <img src="docs/screenshots/lock-screen.webp" width="200" alt="Lock Screen controls showing the recording, New speaker and Bookmark"> | <img src="docs/screenshots/transcript.webp" width="200" alt="Transcript with AI summary card, editing tip, text and a photo"> |
+
 - On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese
 - Keeps recording with the screen locked; resumes by itself after interruptions
   and marks any gap in the transcript
@@ -85,6 +89,26 @@ With a free Apple account the app stops opening after 7 days; just press Run in
 Xcode again. The $99/year Apple Developer Program makes installs last a year.
 
 After pulling new changes, run `xcodegen generate` again before building.
+
+## Download the app from GitHub Releases
+
+Every release on the repository's **Releases** page has the app attached as
+`Dictation-v<version>.ipa` (unsigned: install it with a sideloading tool such as
+Sideloadly using your own Apple ID). To publish a new release, either:
+
+- push a version tag:
+
+  ```bash
+  git tag v0.2.0 && git push origin v0.2.0
+  ```
+
+- or on GitHub open **Actions → CI → Run workflow**, pick the branch, type a
+  version such as `0.2.0`, and press **Run workflow**. (GitHub shows this
+  button only once the workflow is on the default branch, `main`.)
+
+The build runs the tests, builds the app with that version number, and creates
+the release with the IPA and auto-generated notes. Releases are public, like the
+repository.
 
 ## Save to Apple Notes
 

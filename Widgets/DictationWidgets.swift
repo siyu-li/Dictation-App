@@ -75,10 +75,12 @@ struct RecordingLockScreenView: View {
                 StatusDot(isPaused: context.state.isPaused)
                 Text(context.state.statusText)
                     .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
                 Text(context.attributes.language)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .layoutPriority(-1)
                 Spacer(minLength: 8)
                 ElapsedText(startedAt: context.attributes.startedAt)
                     .font(.subheadline.weight(.medium))
@@ -92,20 +94,28 @@ struct RecordingLockScreenView: View {
                     .lineLimit(2)
             }
 
+            // Two equal buttons on one line each; the counts sit on their own
+            // line above, so nothing squeezes the button titles.
+            HStack(spacing: 12) {
+                Label("\(context.state.photoCount)", systemImage: "camera")
+                Label("\(context.state.bookmarkCount)", systemImage: "star")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+
             HStack(spacing: 8) {
                 Button(intent: MarkSpeakerIntent()) {
                     Label("New speaker", systemImage: "person.wave.2.fill")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
                 }
                 Button(intent: AddBookmarkIntent()) {
                     Label("Bookmark", systemImage: "star.fill")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
                 }
-                Spacer(minLength: 4)
-                HStack(spacing: 10) {
-                    Label("\(context.state.photoCount)", systemImage: "camera")
-                    Label("\(context.state.bookmarkCount)", systemImage: "star")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
             }
             .font(.footnote.weight(.medium))
             .buttonStyle(.bordered)
