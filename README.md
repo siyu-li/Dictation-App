@@ -4,6 +4,10 @@ An iPhone app that live-captions the people talking in a room and keeps the
 **whole transcript**, even for 2–3 hour talks. It saves as it goes, so
 nothing needs copying out by hand.
 
+| Home | Recording | Lock Screen | Transcript |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.webp" width="200" alt="Home screen with saved recordings, language switch and Record button"> | <img src="docs/screenshots/recording.webp" width="200" alt="Recording screen with live captions, Slide photo, New speaker, Bookmark and Stop"> | <img src="docs/screenshots/lock-screen.webp" width="200" alt="Lock Screen controls showing the recording, New speaker and Bookmark"> | <img src="docs/screenshots/transcript.webp" width="200" alt="Transcript with AI summary card, editing tip, text and a photo"> |
+
 - On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese
 - Keeps recording with the screen locked; resumes by itself after interruptions
   and marks any gap in the transcript
