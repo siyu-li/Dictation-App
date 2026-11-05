@@ -99,7 +99,8 @@ Sideloadly using your own Apple ID). To publish a new release, either:
   ```
 
 - or on GitHub open **Actions → CI → Run workflow**, pick the branch, type a
-  version such as `0.2.0`, and press **Run workflow**.
+  version such as `0.2.0`, and press **Run workflow**. (GitHub shows this
+  button only once the workflow is on the default branch, `main`.)
 
 The build runs the tests, builds the app with that version number, and creates
 the release with the IPA and auto-generated notes. Releases are public, like the
