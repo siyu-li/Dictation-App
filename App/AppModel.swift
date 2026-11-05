@@ -92,6 +92,15 @@ final class AppModel {
         sessions.removeAll { $0.id == id }
     }
 
+    /// Applies an edit to the latest saved copy of a session and saves it if
+    /// the edit changed something. Returns whether it did.
+    @discardableResult
+    func editSession(_ id: UUID, _ change: (inout TranscriptSession) -> Bool) -> Bool {
+        guard var latest = session(id: id), change(&latest) else { return false }
+        update(latest)
+        return true
+    }
+
     /// Replaces the in-memory copy (or inserts it, newest first) without
     /// re-reading every session from disk.
     private func upsert(_ session: TranscriptSession) {

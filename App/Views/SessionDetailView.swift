@@ -18,6 +18,12 @@ struct SessionDetailView: View {
     @State private var viewerPhoto: PhotoAttachment?
     @State private var toastMessage: String?
     @State private var isExporting = false
+    // Editing
+    @State private var editingParagraph: Paragraph?
+    @State private var pendingParagraphDelete: Paragraph?
+    @State private var editingBookmark: Bookmark?
+    @State private var editingSpeaker: SpeakerChange?
+    @State private var labelDraft = ""
 
     private var isImporting: Bool { model.importingSessionIDs.contains(sessionID) }
 
@@ -46,13 +52,18 @@ struct SessionDetailView: View {
                         Text("Nothing was transcribed in this recording.")
                             .foregroundStyle(.secondary)
                             .padding(.top, 24)
+                    } else {
+                        Label("Long-press a paragraph, bookmark or speaker to edit.", systemImage: "hand.tap")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     TranscriptBlocksList(
                         session: session,
                         options: settings.formatOptions,
                         style: settings.timestampStyle,
                         photoURL: { model.photoURL($0, in: session) },
-                        onPhotoTap: { viewerPhoto = $0 }
+                        onPhotoTap: { viewerPhoto = $0 },
+                        onEdit: { handle($0) }
                     )
                     .equatable()
                 }
@@ -106,6 +117,84 @@ struct SessionDetailView: View {
             PhotoViewer(url: model.photoURL(photo, in: session), takenAt: photo.takenAt)
         }
         .toast($toastMessage)
+        .sheet(item: $editingParagraph) { paragraph in
+            ParagraphEditor(text: paragraph.text) { newText in
+                model.editSession(sessionID) { $0.replaceParagraph(segmentIDs: paragraph.segmentIDs, with: newText) }
+            }
+        }
+        .confirmationDialog(
+            "Delete this paragraph?",
+            isPresented: Binding(get: { pendingParagraphDelete != nil }, set: { if !$0 { pendingParagraphDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingParagraphDelete
+        ) { paragraph in
+            Button("Delete", role: .destructive) {
+                model.editSession(sessionID) { $0.replaceParagraph(segmentIDs: paragraph.segmentIDs, with: "") }
+                toastMessage = "Paragraph deleted"
+            }
+        }
+        .alert(
+            "Bookmark note",
+            isPresented: Binding(get: { editingBookmark != nil }, set: { if !$0 { editingBookmark = nil } }),
+            presenting: editingBookmark
+        ) { bookmark in
+            TextField("Note (optional)", text: $labelDraft)
+            Button("Save") {
+                model.editSession(sessionID) { $0.setBookmarkNote(labelDraft, id: bookmark.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert(
+            "Speaker name",
+            isPresented: Binding(get: { editingSpeaker != nil }, set: { if !$0 { editingSpeaker = nil } }),
+            presenting: editingSpeaker
+        ) { change in
+            TextField("Name (optional)", text: $labelDraft)
+            Button("Save") {
+                model.editSession(sessionID) { $0.setSpeakerLabel(labelDraft, id: change.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    // MARK: - Editing
+
+    private func handle(_ edit: TranscriptEdit) {
+        switch edit {
+        case .editParagraph(let paragraph):
+            editingParagraph = paragraph
+        case .deleteParagraph(let paragraph):
+            pendingParagraphDelete = paragraph
+        case .addBookmark(let date):
+            model.editSession(sessionID) { session in
+                session.addBookmark(before: date)
+                return true
+            }
+            toastMessage = "Bookmark added"
+        case .addSpeaker(let date):
+            var added: SpeakerChange?
+            model.editSession(sessionID) { session in
+                added = session.addSpeakerChange(before: date)
+                return true
+            }
+            // Offer to name the new speaker right away.
+            if let added {
+                labelDraft = ""
+                editingSpeaker = added
+            }
+        case .editBookmark(let bookmark):
+            labelDraft = bookmark.note ?? ""
+            editingBookmark = bookmark
+        case .deleteBookmark(let bookmark):
+            model.editSession(sessionID) { $0.removeItem(id: bookmark.id) }
+            toastMessage = "Bookmark deleted"
+        case .editSpeaker(let change):
+            labelDraft = change.label ?? ""
+            editingSpeaker = change
+        case .deleteSpeaker(let change):
+            model.editSession(sessionID) { $0.removeItem(id: change.id) }
+            toastMessage = "Speaker marker deleted"
+        }
     }
 
     // MARK: - Header
@@ -397,5 +486,42 @@ private struct ChaptersCard: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+/// Full-screen-ish editor for one paragraph's text.
+private struct ParagraphEditor: View {
+    let onSave: (String) -> Void
+    @State private var draft: String
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    init(text: String, onSave: @escaping (String) -> Void) {
+        self.onSave = onSave
+        _draft = State(initialValue: text)
+    }
+
+    var body: some View {
+        NavigationStack {
+            TextEditor(text: $draft)
+                .font(.body)
+                .focused($focused)
+                .padding(.horizontal)
+                .navigationTitle("Edit text")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            onSave(draft)
+                            dismiss()
+                        }
+                    }
+                }
+                .onAppear { focused = true }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

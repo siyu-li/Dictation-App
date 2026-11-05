@@ -1,5 +1,18 @@
 import SwiftUI
 import TranscriptCore
+import UIKit
+
+/// An edit the user asked for from a transcript row's long-press menu.
+enum TranscriptEdit {
+    case editParagraph(Paragraph)
+    case deleteParagraph(Paragraph)
+    case addBookmark(before: Date)
+    case addSpeaker(before: Date)
+    case editBookmark(Bookmark)
+    case deleteBookmark(Bookmark)
+    case editSpeaker(SpeakerChange)
+    case deleteSpeaker(SpeakerChange)
+}
 
 /// One block of a formatted transcript: a paragraph, a speaker marker, a
 /// photo, or a gap in the audio. Used by the live view and the detail view.
@@ -9,11 +22,13 @@ struct TranscriptBlockRow: View {
     let style: TimestampStyle
     let photoURL: (PhotoAttachment) -> URL
     var onPhotoTap: ((PhotoAttachment) -> Void)?
+    /// Set on finished transcripts: rows get a long-press menu to edit.
+    var onEdit: ((TranscriptEdit) -> Void)?
 
     var body: some View {
         switch block {
         case .paragraph(let paragraph):
-            VStack(alignment: .leading, spacing: 3) {
+            let content = VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(timestampLabel(paragraph.start, in: session, style: style))
                         .font(.caption.monospacedDigit())
@@ -26,10 +41,35 @@ struct TranscriptBlockRow: View {
                 }
                 Text(paragraph.text)
                     .font(.body)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .combine)
+
+            if let onEdit {
+                // Long-press menu (it replaces text selection; Copy is in the menu).
+                content
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button { onEdit(.editParagraph(paragraph)) } label: {
+                            Label("Edit text", systemImage: "pencil")
+                        }
+                        Button { UIPasteboard.general.string = paragraph.text } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                        Button { onEdit(.addBookmark(before: paragraph.start)) } label: {
+                            Label("Add bookmark here", systemImage: "star")
+                        }
+                        Button { onEdit(.addSpeaker(before: paragraph.start)) } label: {
+                            Label("New speaker starts here", systemImage: "person.wave.2")
+                        }
+                        Divider()
+                        Button(role: .destructive) { onEdit(.deleteParagraph(paragraph)) } label: {
+                            Label("Delete paragraph", systemImage: "trash")
+                        }
+                    }
+            } else {
+                content.textSelection(.enabled)
+            }
 
         case .speakerChange(let change):
             HStack(spacing: 8) {
@@ -42,6 +82,14 @@ struct TranscriptBlockRow: View {
             }
             .padding(.top, 6)
             .accessibilityElement(children: .combine)
+            .editMenu(onEdit != nil) {
+                Button { onEdit?(.editSpeaker(change)) } label: {
+                    Label("Rename speaker", systemImage: "pencil")
+                }
+                Button(role: .destructive) { onEdit?(.deleteSpeaker(change)) } label: {
+                    Label("Delete speaker marker", systemImage: "trash")
+                }
+            }
 
         case .photo(let photo):
             VStack(alignment: .leading, spacing: 4) {
@@ -104,6 +152,14 @@ struct TranscriptBlockRow: View {
             .padding(.vertical, 8)
             .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             .accessibilityElement(children: .combine)
+            .editMenu(onEdit != nil) {
+                Button { onEdit?(.editBookmark(bookmark)) } label: {
+                    Label(bookmark.note == nil ? "Add note" : "Edit note", systemImage: "pencil")
+                }
+                Button(role: .destructive) { onEdit?(.deleteBookmark(bookmark)) } label: {
+                    Label("Delete bookmark", systemImage: "trash")
+                }
+            }
 
         case .gap(let gap):
             Label(gapDescription(gap), systemImage: "mic.slash")
@@ -144,6 +200,7 @@ struct TranscriptBlocksList: View, Equatable {
     let style: TimestampStyle
     let photoURL: (PhotoAttachment) -> URL
     var onPhotoTap: ((PhotoAttachment) -> Void)?
+    var onEdit: ((TranscriptEdit) -> Void)?
 
     static func == (lhs: TranscriptBlocksList, rhs: TranscriptBlocksList) -> Bool {
         // Comparing the item arrays is instant when nothing changed (same
@@ -154,6 +211,7 @@ struct TranscriptBlocksList: View, Equatable {
             && lhs.options == rhs.options
             && lhs.style == rhs.style
             && (lhs.onPhotoTap == nil) == (rhs.onPhotoTap == nil)
+            && (lhs.onEdit == nil) == (rhs.onEdit == nil)
     }
 
     /// Scroll target of the chapter heading with this index (chapters sorted by start).
@@ -202,7 +260,8 @@ struct TranscriptBlocksList: View, Equatable {
                     session: session,
                     style: style,
                     photoURL: photoURL,
-                    onPhotoTap: onPhotoTap
+                    onPhotoTap: onPhotoTap,
+                    onEdit: onEdit
                 )
             }
         }
@@ -223,5 +282,17 @@ private struct ChapterHeading: View {
         }
         .padding(.top, 10)
         .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension View {
+    /// Adds a long-press menu only when editing is enabled.
+    @ViewBuilder
+    func editMenu<MenuItems: View>(_ enabled: Bool, @ViewBuilder _ items: () -> MenuItems) -> some View {
+        if enabled {
+            contextMenu { items() }
+        } else {
+            self
+        }
     }
 }

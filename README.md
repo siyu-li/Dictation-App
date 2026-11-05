@@ -11,6 +11,9 @@ nothing needs copying out by hand.
   the moment you took them
 - "New speaker" and "Bookmark" buttons, paragraphs at pauses, timestamps
 - Slide text is read from photos on the phone
+- Edit a finished transcript: long-press a paragraph to edit or delete its
+  text, or to add a bookmark or a new speaker there; long-press a bookmark or
+  speaker marker to rename or delete it
 - Copy, share, or send to Apple Notes through a Shortcut
 - Optional: save the audio (off by default)
 - AI summary: title, summary, key points, action items, chapters, guessed
