@@ -16,20 +16,22 @@ struct RecordingView: View {
     @State private var speakerMarkCount = 0
     @State private var speakerConfirmationVisible = false
 
-    @ScaledMetric(relativeTo: .footnote) private var captionHeight: CGFloat = 54
+    @ScaledMetric(relativeTo: .title3) private var captionHeight: CGFloat = 104
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             statusHeader
             elapsedTime
             captionStrip
             Spacer(minLength: 0)
             infoLine
             actionButtons
-            stopButton
         }
         .padding()
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(background.ignoresSafeArea())
+        // Dark while recording: calm, readable, and no bright screen in a
+        // dark room. Nothing here animates continuously (battery).
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showLiveTranscript) {
             LiveTranscriptView()
                 .environment(model)
@@ -54,16 +56,39 @@ struct RecordingView: View {
 
     // MARK: - Parts
 
+    /// A static, mostly black gradient with a faint indigo glow.
+    private var background: some View {
+        MeshGradient(
+            width: 2,
+            height: 2,
+            points: [SIMD2<Float>(0, 0), SIMD2<Float>(1, 0), SIMD2<Float>(0, 1), SIMD2<Float>(1, 1)],
+            colors: [
+                Color(red: 0.10, green: 0.07, blue: 0.20),
+                .black,
+                .black,
+                Color(red: 0.04, green: 0.05, blue: 0.12),
+            ]
+        )
+    }
+
     private var statusHeader: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: statusSymbol)
                     .foregroundStyle(statusColor)
-                    .symbolEffect(.pulse, isActive: recorder.state == .recording)
+                    .contentTransition(.symbolEffect(.replace))
                     .accessibilityHidden(true)
                 Text(statusTitle)
                     .font(.headline)
+                if let session = recorder.session {
+                    Text("· " + TranscriptLanguage.displayName(for: session.localeIdentifier))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: Capsule())
             if let detail = statusDetail {
                 Text(detail)
                     .font(.subheadline)
@@ -86,7 +111,9 @@ struct RecordingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let elapsed = recorder.session?.duration(now: context.date) ?? 0
             Text(TimestampFormatter.elapsed(elapsed))
-                .font(.system(.largeTitle, design: .rounded).weight(.light).monospacedDigit())
+                .font(.system(size: 64, weight: .light, design: .rounded).monospacedDigit())
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
                 .accessibilityLabel("Elapsed time \(TimestampFormatter.duration(elapsed))")
         }
     }
@@ -98,15 +125,15 @@ struct RecordingView: View {
         } label: {
             let caption = recorder.captionTail(maxCharacters: 400)
             Text(caption.isEmpty ? "Listening…" : caption)
-                .font(.footnote)
+                .font(.title3)
                 .foregroundStyle(caption.isEmpty ? HierarchicalShapeStyle.secondary : HierarchicalShapeStyle.primary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 // Bottom-aligned and clipped, so the newest words are always visible.
                 .frame(maxWidth: .infinity, minHeight: captionHeight, maxHeight: captionHeight, alignment: .bottomLeading)
                 .clipped()
-                .padding(12)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                .padding(14)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Live captions")
@@ -115,7 +142,6 @@ struct RecordingView: View {
     }
 
     private var infoLine: some View {
-        let photoCount = recorder.session?.photos.count ?? 0
         let savingAudio = !(recorder.session?.audioRecordings.isEmpty ?? true)
         return VStack(spacing: 4) {
             if speakerConfirmationVisible {
@@ -125,10 +151,6 @@ struct RecordingView: View {
                     .transition(.opacity)
             }
             HStack(spacing: 16) {
-                if let session = recorder.session {
-                    Label(TranscriptLanguage.displayName(for: session.localeIdentifier), systemImage: "globe")
-                }
-                Label("\(photoCount) photo\(photoCount == 1 ? "" : "s")", systemImage: "photo")
                 if savingAudio {
                     Label("Saving audio", systemImage: "waveform")
                 }
@@ -139,31 +161,38 @@ struct RecordingView: View {
         .animation(.default, value: speakerConfirmationVisible)
     }
 
+    /// The camera is the main control (used at every slide); New speaker and
+    /// a small Stop sit below it, Stop away from the thumb's main target.
     private var actionButtons: some View {
         VStack(spacing: 12) {
             recentPhotos
             Button {
                 showCamera = true
             } label: {
-                Label("Take photo", systemImage: "camera.fill")
+                Label("Slide photo", systemImage: "camera.fill")
                     .font(.title2.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 64)
+                    .frame(maxWidth: .infinity, minHeight: 72)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
+            .buttonStyle(.glassProminent)
+            .tint(.indigo)
+            .disabled(!recorder.isRecording)
             .accessibilityHint("Photos of slides go into the transcript at this moment and into the AI summary")
 
-            Button {
-                markSpeaker()
-            } label: {
-                Label("New speaker", systemImage: "person.wave.2.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            HStack(spacing: 12) {
+                Button {
+                    markSpeaker()
+                } label: {
+                    Label("New speaker", systemImage: "person.wave.2.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.glass)
+                .disabled(!recorder.isRecording)
+                .accessibilityHint("Marks that a different person started talking")
+
+                stopButton
             }
-            .buttonStyle(.bordered)
-            .accessibilityHint("Marks that a different person started talking")
         }
-        .disabled(!recorder.isRecording)
     }
 
     /// The last few photos, so it's clear they went into the transcript.
@@ -196,12 +225,10 @@ struct RecordingView: View {
                 model.cancelStart()
             } label: {
                 Label("Cancel", systemImage: "xmark")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .font(.headline)
+                    .frame(minWidth: 100, minHeight: 50)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+            .buttonStyle(.glass)
         } else {
             stopRecordingButton
         }
@@ -212,12 +239,10 @@ struct RecordingView: View {
             showStopConfirmation = true
         } label: {
             Label(recorder.state == .stopping ? "Finishing…" : "Stop", systemImage: "stop.fill")
-                .font(.title3.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .font(.headline)
+                .frame(minWidth: 100, minHeight: 50)
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
+        .buttonStyle(.glass)
         .tint(.red)
         .disabled(!recorder.isRecording)
     }
@@ -252,7 +277,7 @@ struct RecordingView: View {
         case .starting: "Getting the microphone and speech model ready. The first time you use a language, the model downloads, which can take a few minutes on a slow connection."
         case .interrupted(let reason): "Paused: \(reason). Will resume automatically."
         case .stopping: "Saving the last words of the transcript."
-        case .recording: "You can lock your phone. Recording continues."
+        case .recording: "You can lock your phone."
         case .idle: nil
         }
     }

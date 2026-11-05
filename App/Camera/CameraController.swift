@@ -56,6 +56,22 @@ final class CameraController: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Digital zoom (the iPhone 13 has no telephoto lens), e.g. 1, 2 or 3.
+    func setZoom(_ factor: CGFloat) {
+        queue.async {
+            guard let device = self.device else { return }
+            do {
+                try device.lockForConfiguration()
+                let upper = min(device.maxAvailableVideoZoomFactor, 10)
+                let clamped = min(max(factor, device.minAvailableVideoZoomFactor), upper)
+                device.ramp(toVideoZoomFactor: clamped, withRate: 8)
+                device.unlockForConfiguration()
+            } catch {
+                // Zoom is optional; ignore failures.
+            }
+        }
+    }
+
     func stop() {
         queue.async {
             if self.session.isRunning {

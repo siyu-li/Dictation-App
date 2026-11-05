@@ -21,6 +21,7 @@ struct CameraView: View {
     @State private var shutterCount = 0
     @State private var flashOpacity = 0.0
     @State private var errorMessage: String?
+    @State private var zoom: CGFloat = 1
     /// Done was tapped while photos were still being saved.
     @State private var isClosing = false
 
@@ -38,7 +39,8 @@ struct CameraView: View {
                 permissionMessage
             }
 
-            Color.white
+            // A dark blink instead of a white flash: no light in a dark room.
+            Color.black
                 .opacity(flashOpacity)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -87,9 +89,10 @@ struct CameraView: View {
                         .background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal)
                 }
+                zoomPicker
                 shutterButton
                     .padding(.top, 12)
-                Text("Photos go into the transcript at the moment you take them. Recording continues.")
+                Text("Photos go into the transcript at this moment. Recording continues. The volume buttons also take a photo.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
@@ -125,6 +128,27 @@ struct CameraView: View {
             .disabled(isClosing)
         }
         .padding()
+    }
+
+    /// 1× / 2× / 3× digital zoom for slides across the room.
+    private var zoomPicker: some View {
+        HStack(spacing: 8) {
+            ForEach([1, 2, 3], id: \.self) { factor in
+                let selected = Int(zoom) == factor
+                Button {
+                    zoom = CGFloat(factor)
+                    controller?.setZoom(zoom)
+                } label: {
+                    Text("\(factor)×")
+                        .font(.footnote.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(selected ? .yellow : .white)
+                        .frame(width: 40, height: 40)
+                        .background(.black.opacity(selected ? 0.7 : 0.4), in: Circle())
+                }
+                .accessibilityLabel("Zoom \(factor) times")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
     }
 
     private var shutterButton: some View {
