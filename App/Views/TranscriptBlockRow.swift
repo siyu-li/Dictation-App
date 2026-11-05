@@ -70,15 +70,40 @@ struct TranscriptBlockRow: View {
                         .font(.subheadline)
                         .textSelection(.enabled)
                 }
+
+                if let slideText = photo.recognizedText, !slideText.isEmpty {
+                    DisclosureGroup {
+                        Text(slideText)
+                            .font(.footnote)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    } label: {
+                        Label("Slide text", systemImage: "text.viewfinder")
+                            .font(.footnote)
+                    }
+                }
             }
 
         case .bookmark(let bookmark):
-            Label(
-                timestampLabel(bookmark.at, in: session, style: style) + " · Bookmark" + (bookmark.note.map { ": \($0)" } ?? ""),
-                systemImage: "star.fill"
-            )
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.orange)
+            HStack(spacing: 8) {
+                Image(systemName: "star.fill")
+                    .foregroundStyle(.orange)
+                Text("Bookmark")
+                    .font(.subheadline.weight(.semibold))
+                if let note = bookmark.note {
+                    Text(note)
+                        .font(.subheadline)
+                }
+                Spacer(minLength: 0)
+                Text(timestampLabel(bookmark.at, in: session, style: style))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine)
 
         case .gap(let gap):
             Label(gapDescription(gap), systemImage: "mic.slash")
@@ -128,17 +153,84 @@ struct TranscriptBlocksList: View, Equatable {
             && lhs.options == rhs.options
             && lhs.style == rhs.style
             && (lhs.onPhotoTap == nil) == (rhs.onPhotoTap == nil)
+            && recognizedPhotoCount(lhs.session) == recognizedPhotoCount(rhs.session)
+    }
+
+    /// Slide text arrives after a photo was added, without changing the item count.
+    private static func recognizedPhotoCount(_ session: TranscriptSession) -> Int {
+        var count = 0
+        for item in session.items {
+            if case .photo(let photo) = item, photo.recognizedText != nil { count += 1 }
+        }
+        return count
+    }
+
+    /// Scroll target of the chapter heading with this index (chapters sorted by start).
+    static func chapterAnchor(_ index: Int) -> String {
+        "chapter-\(index)"
+    }
+
+    private enum RowKind {
+        case chapter(Chapter)
+        case block(TranscriptBlock)
+    }
+
+    private struct Row: Identifiable {
+        let id: String
+        let kind: RowKind
+    }
+
+    /// Blocks with a chapter heading before the first paragraph at or after
+    /// each chapter's start.
+    private static func rows(blocks: [TranscriptBlock], chapters: [Chapter]) -> [Row] {
+        let sorted = chapters.sorted { $0.start < $1.start }
+        var next = 0
+        var rows: [Row] = []
+        rows.reserveCapacity(blocks.count + sorted.count)
+        for block in blocks {
+            if case .paragraph(let paragraph) = block {
+                while next < sorted.count, sorted[next].start <= paragraph.start {
+                    rows.append(Row(id: chapterAnchor(next), kind: .chapter(sorted[next])))
+                    next += 1
+                }
+            }
+            rows.append(Row(id: block.id.uuidString, kind: .block(block)))
+        }
+        return rows
     }
 
     var body: some View {
-        ForEach(TranscriptFormatter.blocks(for: session.items, options: options)) { block in
-            TranscriptBlockRow(
-                block: block,
-                session: session,
-                style: style,
-                photoURL: photoURL,
-                onPhotoTap: onPhotoTap
-            )
+        let blocks = TranscriptFormatter.blocks(for: session.items, options: options)
+        ForEach(Self.rows(blocks: blocks, chapters: session.insights?.chapters ?? [])) { row in
+            switch row.kind {
+            case .chapter(let chapter):
+                ChapterHeading(title: chapter.title)
+            case .block(let block):
+                TranscriptBlockRow(
+                    block: block,
+                    session: session,
+                    style: style,
+                    photoURL: photoURL,
+                    onPhotoTap: onPhotoTap
+                )
+            }
         }
+    }
+}
+
+/// A chapter title inside the transcript.
+private struct ChapterHeading: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color.accentColor)
+                .frame(width: 4, height: 22)
+            Text(title)
+                .font(.title3.weight(.semibold))
+        }
+        .padding(.top, 10)
+        .accessibilityAddTraits(.isHeader)
     }
 }

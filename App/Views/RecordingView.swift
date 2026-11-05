@@ -3,8 +3,10 @@ import TranscriptCore
 import UIKit
 
 /// Shown full-screen while a recording is active. Designed to be glanced at,
-/// not watched: a small caption strip, the elapsed time, and big buttons.
-/// The phone may lock; recording continues in the background.
+/// not watched: a caption card, the elapsed time, and big buttons. Same light
+/// (system) look as the rest of the app. The phone may lock; recording
+/// continues in the background. Nothing here animates continuously except the
+/// small level meter, which only runs while this screen is visible.
 struct RecordingView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
@@ -13,8 +15,9 @@ struct RecordingView: View {
     @State private var showCamera = false
     @State private var showStopConfirmation = false
     @State private var showLiveTranscript = false
-    @State private var speakerMarkCount = 0
-    @State private var speakerConfirmationVisible = false
+    /// Bumped on every New speaker / Bookmark tap (haptic + confirmation).
+    @State private var markCount = 0
+    @State private var confirmation: String?
 
     @ScaledMetric(relativeTo: .title3) private var captionHeight: CGFloat = 104
 
@@ -28,10 +31,7 @@ struct RecordingView: View {
             actionButtons
         }
         .padding()
-        .background(background.ignoresSafeArea())
-        // Dark while recording: calm, readable, and no bright screen in a
-        // dark room. Nothing here animates continuously (battery).
-        .preferredColorScheme(.dark)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .sheet(isPresented: $showLiveTranscript) {
             LiveTranscriptView()
                 .environment(model)
@@ -40,7 +40,10 @@ struct RecordingView: View {
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraView { data, takenAt in
-                _ = try recorder.addPhoto(jpegData: data, takenAt: takenAt)
+                let photo = try recorder.addPhoto(jpegData: data, takenAt: takenAt)
+                if let sessionID = recorder.session?.id {
+                    model.recognizeSlideText(in: photo, sessionID: sessionID)
+                }
             }
         }
         .confirmationDialog("Stop recording?", isPresented: $showStopConfirmation, titleVisibility: .visible) {
@@ -51,25 +54,10 @@ struct RecordingView: View {
         } message: {
             Text("The transcript is saved and opened.")
         }
-        .sensoryFeedback(.success, trigger: speakerMarkCount)
+        .sensoryFeedback(.impact(weight: .light), trigger: markCount)
     }
 
     // MARK: - Parts
-
-    /// A static, mostly black gradient with a faint indigo glow.
-    private var background: some View {
-        MeshGradient(
-            width: 2,
-            height: 2,
-            points: [SIMD2<Float>(0, 0), SIMD2<Float>(1, 0), SIMD2<Float>(0, 1), SIMD2<Float>(1, 1)],
-            colors: [
-                Color(red: 0.10, green: 0.07, blue: 0.20),
-                .black,
-                .black,
-                Color(red: 0.04, green: 0.05, blue: 0.12),
-            ]
-        )
-    }
 
     private var statusHeader: some View {
         VStack(spacing: 8) {
@@ -84,6 +72,9 @@ struct RecordingView: View {
                     Text("· " + TranscriptLanguage.displayName(for: session.localeIdentifier))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+                if recorder.state == .recording {
+                    AudioLevelBars(meter: model.audioLevel)
                 }
             }
             .padding(.horizontal, 16)
@@ -111,14 +102,14 @@ struct RecordingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let elapsed = recorder.session?.duration(now: context.date) ?? 0
             Text(TimestampFormatter.elapsed(elapsed))
-                .font(.system(size: 64, weight: .light, design: .rounded).monospacedDigit())
+                .font(.system(size: 60, weight: .light, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
                 .accessibilityLabel("Elapsed time \(TimestampFormatter.duration(elapsed))")
         }
     }
 
-    /// The last two or three lines of the live transcript. Tap to see more.
+    /// The last few lines of the live transcript. Tap to see more.
     private var captionStrip: some View {
         Button {
             showLiveTranscript = true
@@ -133,7 +124,7 @@ struct RecordingView: View {
                 .frame(maxWidth: .infinity, minHeight: captionHeight, maxHeight: captionHeight, alignment: .bottomLeading)
                 .clipped()
                 .padding(14)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Live captions")
@@ -142,15 +133,20 @@ struct RecordingView: View {
     }
 
     private var infoLine: some View {
-        let savingAudio = !(recorder.session?.audioRecordings.isEmpty ?? true)
+        let session = recorder.session
+        let savingAudio = !(session?.audioRecordings.isEmpty ?? true)
+        let bookmarkCount = session?.bookmarks.count ?? 0
         return VStack(spacing: 4) {
-            if speakerConfirmationVisible {
-                Label("New speaker marked", systemImage: "checkmark.circle.fill")
+            if let confirmation {
+                Label(confirmation, systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.green)
                     .transition(.opacity)
             }
             HStack(spacing: 16) {
+                if bookmarkCount > 0 {
+                    Label("\(bookmarkCount) bookmark\(bookmarkCount == 1 ? "" : "s")", systemImage: "star.fill")
+                }
                 if savingAudio {
                     Label("Saving audio", systemImage: "waveform")
                 }
@@ -158,11 +154,11 @@ struct RecordingView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
-        .animation(.default, value: speakerConfirmationVisible)
+        .animation(.default, value: confirmation)
     }
 
-    /// The camera is the main control (used at every slide); New speaker and
-    /// a small Stop sit below it, Stop away from the thumb's main target.
+    /// The camera is the main control (used at every slide). New speaker,
+    /// Bookmark and a small Stop share the row below it.
     private var actionButtons: some View {
         VStack(spacing: 12) {
             recentPhotos
@@ -171,24 +167,25 @@ struct RecordingView: View {
             } label: {
                 Label("Slide photo", systemImage: "camera.fill")
                     .font(.title2.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 72)
+                    .frame(maxWidth: .infinity, minHeight: 64)
             }
             .buttonStyle(.glassProminent)
-            .tint(.indigo)
+            .tint(.accentColor)
             .disabled(!recorder.isRecording)
             .accessibilityHint("Photos of slides go into the transcript at this moment and into the AI summary")
 
-            HStack(spacing: 12) {
-                Button {
-                    markSpeaker()
-                } label: {
-                    Label("New speaker", systemImage: "person.wave.2.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+            HStack(spacing: 10) {
+                RecordingActionButton(title: "New speaker", systemImage: "person.wave.2.fill") {
+                    mark("New speaker marked") { recorder.markSpeakerChange() }
                 }
-                .buttonStyle(.glass)
                 .disabled(!recorder.isRecording)
                 .accessibilityHint("Marks that a different person started talking")
+
+                RecordingActionButton(title: "Bookmark", systemImage: "star.fill") {
+                    mark("Bookmarked") { recorder.markBookmark() }
+                }
+                .disabled(!recorder.isRecording)
+                .accessibilityHint("Marks this moment as important; the AI summary will cover it")
 
                 stopButton
             }
@@ -221,42 +218,32 @@ struct RecordingView: View {
     @ViewBuilder
     private var stopButton: some View {
         if recorder.state == .starting {
-            Button {
+            RecordingActionButton(title: "Cancel", systemImage: "xmark") {
                 model.cancelStart()
-            } label: {
-                Label("Cancel", systemImage: "xmark")
-                    .font(.headline)
-                    .frame(minWidth: 100, minHeight: 50)
             }
-            .buttonStyle(.glass)
         } else {
-            stopRecordingButton
+            RecordingActionButton(
+                title: recorder.state == .stopping ? "Finishing" : "Stop",
+                systemImage: "stop.fill",
+                tint: .red
+            ) {
+                showStopConfirmation = true
+            }
+            .disabled(!recorder.isRecording)
         }
-    }
-
-    private var stopRecordingButton: some View {
-        Button {
-            showStopConfirmation = true
-        } label: {
-            Label(recorder.state == .stopping ? "Finishing…" : "Stop", systemImage: "stop.fill")
-                .font(.headline)
-                .frame(minWidth: 100, minHeight: 50)
-        }
-        .buttonStyle(.glass)
-        .tint(.red)
-        .disabled(!recorder.isRecording)
     }
 
     // MARK: - Actions
 
-    private func markSpeaker() {
-        recorder.markSpeakerChange()
-        speakerMarkCount += 1
-        speakerConfirmationVisible = true
-        let mark = speakerMarkCount
+    /// Runs a marker action with a light haptic and a short confirmation.
+    private func mark(_ message: String, action: () -> Void) {
+        action()
+        markCount += 1
+        confirmation = message
+        let current = markCount
         Task {
             try? await Task.sleep(for: .seconds(1.5))
-            if mark == speakerMarkCount { speakerConfirmationVisible = false }
+            if current == markCount { confirmation = nil }
         }
     }
 
@@ -296,6 +283,65 @@ struct RecordingView: View {
         case .interrupted: .orange
         default: .secondary
         }
+    }
+}
+
+/// A compact icon-over-title button for the row under Slide photo.
+private struct RecordingActionButton: View {
+    let title: String
+    let systemImage: String
+    var tint: Color?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                Text(title)
+                    .font(.footnote.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .foregroundStyle(tint ?? .primary)
+        }
+        .buttonStyle(.glass)
+    }
+}
+
+/// Five small bars showing that the microphone hears sound. Refreshed 10
+/// times a second only while visible (TimelineView pauses off screen and when
+/// the phone is locked); a static icon when Reduce Motion is on.
+private struct AudioLevelBars: View {
+    let meter: AudioLevelMeter
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Image(systemName: "waveform")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    bars(level: CGFloat(meter.currentLevel))
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func bars(level: CGFloat) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<5, id: \.self) { index in
+                Capsule()
+                    .fill(level > CGFloat(index) / 5 ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .frame(width: 3, height: 6 + CGFloat(index) * 2.5)
+            }
+        }
+        .frame(height: 18)
     }
 }
 

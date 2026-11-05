@@ -30,33 +30,60 @@ struct SessionDetailView: View {
     }
 
     private func content(for session: TranscriptSession) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                header(for: session)
-                if !session.speechSegments.isEmpty {
-                    InsightsSection(sessionID: session.id)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    header(for: session)
+                    if !session.speechSegments.isEmpty {
+                        InsightsSection(sessionID: session.id)
+                    }
+                    if let chapters = session.insights?.chapters, !chapters.isEmpty {
+                        ChaptersCard(chapters: chapters, session: session, style: settings.timestampStyle) { index in
+                            withAnimation { proxy.scrollTo(TranscriptBlocksList.chapterAnchor(index), anchor: .top) }
+                        }
+                    }
+                    if session.items.isEmpty {
+                        Text("Nothing was transcribed in this recording.")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 24)
+                    }
+                    TranscriptBlocksList(
+                        session: session,
+                        options: settings.formatOptions,
+                        style: settings.timestampStyle,
+                        photoURL: { model.photoURL($0, in: session) },
+                        onPhotoTap: { viewerPhoto = $0 }
+                    )
+                    .equatable()
                 }
-                if session.items.isEmpty {
-                    Text("Nothing was transcribed in this recording.")
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 24)
-                }
-                TranscriptBlocksList(
-                    session: session,
-                    options: settings.formatOptions,
-                    style: settings.timestampStyle,
-                    photoURL: { model.photoURL($0, in: session) },
-                    onPhotoTap: { viewerPhoto = $0 }
-                )
-                .equatable()
+                .padding()
             }
-            .padding()
         }
         .navigationTitle(TranscriptExporter.displayTitle(for: session))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 actionsMenu(for: session)
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button {
+                    copyAll(session)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                Button {
+                    shareText(session)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                Spacer()
+                Button {
+                    sendToNotes(session)
+                } label: {
+                    Label("Send to Notes", systemImage: "note.text")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
         .alert("Rename recording", isPresented: $showRename) {
@@ -137,30 +164,11 @@ struct SessionDetailView: View {
     private func actionsMenu(for session: TranscriptSession) -> some View {
         Menu {
             Button {
-                UIPasteboard.general.string = TranscriptSharing.plainText(for: session, settings: settings)
-                toastMessage = "Transcript copied"
-            } label: {
-                Label("Copy all", systemImage: "doc.on.doc")
-            }
-
-            Button {
-                shareText(session)
-            } label: {
-                Label("Share text", systemImage: "square.and.arrow.up")
-            }
-
-            Button {
                 exportFolder(session)
             } label: {
                 Label("Export Markdown + photos", systemImage: "folder")
             }
             .disabled(isExporting)
-
-            Button {
-                sendToNotes(session)
-            } label: {
-                Label("Send to Notes", systemImage: "note.text")
-            }
 
             Divider()
 
@@ -195,6 +203,11 @@ struct SessionDetailView: View {
         let title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.title = title.isEmpty ? nil : title
         model.update(updated)
+    }
+
+    private func copyAll(_ session: TranscriptSession) {
+        UIPasteboard.general.string = TranscriptSharing.plainText(for: session, settings: settings)
+        toastMessage = "Transcript copied"
     }
 
     private func shareText(_ session: TranscriptSession) {
@@ -347,5 +360,42 @@ private struct ZoomableImage: UIViewRepresentable {
                 scrollView.zoom(to: rect, animated: true)
             }
         }
+    }
+}
+
+/// Compact list of the AI chapters; tapping one jumps to it in the transcript.
+private struct ChaptersCard: View {
+    let chapters: [Chapter]
+    let session: TranscriptSession
+    let style: TimestampStyle
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Chapters", systemImage: "list.bullet")
+                .font(.headline)
+            ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                Button {
+                    onSelect(index)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(timestampLabel(chapter.start, in: session, style: style))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 44, alignment: .leading)
+                        Text(chapter.title)
+                            .font(.subheadline)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Jumps to this chapter")
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 }

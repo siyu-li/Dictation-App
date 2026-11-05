@@ -19,7 +19,7 @@ struct RootView: View {
                     ContentUnavailableView(
                         "No recordings yet",
                         systemImage: "waveform",
-                        description: Text("Tap Start recording to capture a conversation. The transcript is saved as you go.")
+                        description: Text("Tap Record to capture a conversation. The transcript is saved as you go. While recording, tap Slide photo to add slides to the transcript.")
                     )
                 } else {
                     sessionList
@@ -78,18 +78,22 @@ struct RootView: View {
 
     private var sessionList: some View {
         List {
-            ForEach(model.sessions) { session in
-                NavigationLink(value: session.id) {
-                    SessionRow(session: session)
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button {
-                        pendingDelete = session
-                    } label: {
-                        Label("Delete", systemImage: "trash")
+            Section {
+                ForEach(model.sessions) { session in
+                    NavigationLink(value: session.id) {
+                        SessionRow(session: session)
                     }
-                    .tint(.red)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            pendingDelete = session
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .tint(.red)
+                    }
                 }
+            } footer: {
+                Text("While recording, tap Slide photo to add slides to the transcript.")
             }
         }
         .listStyle(.insetGrouped)
@@ -128,7 +132,8 @@ private struct SessionRow: View {
     }
 }
 
-/// Language switch and the big Start button at the bottom of the home screen.
+/// A compact language chip and the Record button, floating at the bottom of
+/// the home screen.
 private struct StartRecordingBar: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
@@ -136,7 +141,7 @@ private struct StartRecordingBar: View {
 
     var body: some View {
         @Bindable var settings = settings
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             if let error = recorder.lastError {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -154,37 +159,37 @@ private struct StartRecordingBar: View {
                     .accessibilityLabel("Dismiss message")
                 }
                 .padding(10)
-                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
 
-            Picker("Language", selection: $settings.language) {
-                ForEach(TranscriptLanguage.allCases) { language in
-                    Text(language.shortName).tag(language)
+            HStack(spacing: 10) {
+                Menu {
+                    Picker("Language", selection: $settings.language) {
+                        ForEach(TranscriptLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+                } label: {
+                    Label(settings.language.shortName, systemImage: "globe")
+                        .font(.subheadline.weight(.medium))
+                        .frame(minHeight: 44)
                 }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Recording language")
+                .buttonStyle(.glass)
+                .accessibilityLabel("Recording language, \(settings.language.displayName)")
 
-            Button {
-                Task { await model.startRecording() }
-            } label: {
-                Label("Start recording", systemImage: "mic.fill")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                Button {
+                    Task { await model.startRecording() }
+                } label: {
+                    Label("Record", systemImage: "mic.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.accentColor)
+                .disabled(recorder.isActive)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.red)
-            .disabled(recorder.isActive)
-
-            Label("While recording, tap Take photo to add slides to the transcript.", systemImage: "camera")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .padding(.horizontal)
-        .padding(.top, 12)
         .padding(.bottom, 8)
-        .background(.bar)
     }
 }

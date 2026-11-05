@@ -21,6 +21,7 @@ final class CaptureRun: @unchecked Sendable {
     private let input: AsyncStream<AnalyzerInput>.Continuation
     private let events: AsyncStream<TranscriptionEvent>.Continuation
     private let log: DiagnosticsLog
+    private let levelMeter: AudioLevelMeter?
     private let converter = BufferConverter()
     private var audioFile: AudioFileWriter?
     private var audioFileStarted = false
@@ -46,7 +47,8 @@ final class CaptureRun: @unchecked Sendable {
         input: AsyncStream<AnalyzerInput>.Continuation,
         events: AsyncStream<TranscriptionEvent>.Continuation,
         audioFile: AudioFileWriter?,
-        log: DiagnosticsLog
+        log: DiagnosticsLog,
+        levelMeter: AudioLevelMeter? = nil
     ) {
         self.id = id
         self.analyzerFormat = analyzerFormat
@@ -54,6 +56,7 @@ final class CaptureRun: @unchecked Sendable {
         self.events = events
         self.audioFile = audioFile
         self.log = log
+        self.levelMeter = levelMeter
     }
 
     // MARK: - Engine actor side
@@ -160,6 +163,7 @@ final class CaptureRun: @unchecked Sendable {
             onDiscontinuity?(last)
             return
         }
+        levelMeter?.measure(buffer)
 
         let converted: AVAudioPCMBuffer
         do {

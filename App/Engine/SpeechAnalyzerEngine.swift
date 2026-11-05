@@ -33,6 +33,8 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
     private static let resumeAudioTimeout: TimeInterval = 3
 
     private let log: DiagnosticsLog
+    /// Shared with the recording screen's level meter.
+    private let levelMeter: AudioLevelMeter?
 
     private var events: AsyncStream<TranscriptionEvent>.Continuation?
     private var configuration: TranscriptionConfiguration?
@@ -62,8 +64,9 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
     /// The model lookup/download of the start in progress, so it can be cancelled.
     private var pendingStartWork: Task<ResolvedModel, Error>?
 
-    init(log: DiagnosticsLog) {
+    init(log: DiagnosticsLog, levelMeter: AudioLevelMeter? = nil) {
         self.log = log
+        self.levelMeter = levelMeter
     }
 
     // MARK: - TranscriptionEngine
@@ -255,7 +258,8 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             input: inputContinuation,
             events: events,
             audioFile: audioFile,
-            log: log
+            log: log,
+            levelMeter: levelMeter
         )
 
         do {
