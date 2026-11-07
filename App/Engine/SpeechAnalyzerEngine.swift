@@ -124,14 +124,19 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         quickFailures = 0
         let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self, bufferingPolicy: .unbounded)
         events = continuation
-        logEngine("Starting: locale=\(configuration.localeIdentifier) saveAudio=\(configuration.audioDirectory != nil)")
+        logEngine("Starting: locale=\(configuration.localeIdentifier) saveAudio=\(configuration.audioDirectory != nil) model=\(configuration.speechModel.rawValue)")
 
         do {
             try await Self.requestMicrophonePermission(log: log)
             try ensureCurrent(gen) // cancelled while the permission prompt was up
             try Self.activateAudioSession(log: log)
             let status: @Sendable (String) -> Void = { continuation.yield(.status($0)) }
-            var resolved = try await resolveModel(configuration.localeIdentifier, allowSpeechTranscriber: true, status: status)
+            // The meeting model falls back to dictation when it isn't available.
+            var resolved = try await resolveModel(
+                configuration.localeIdentifier,
+                allowSpeechTranscriber: configuration.speechModel == .meeting,
+                status: status
+            )
             try ensureCurrent(gen)
             model = resolved
             // Listen for interruptions before the first run starts so none are missed.
@@ -235,11 +240,29 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         sessionRunIndex += 1
         let runID = runCounter
 
-        let module = SpeechModelSetup.makeModule(model)
-        let analyzer = SpeechAnalyzer(modules: [module.speechModule])
+        let module = SpeechModelSetup.makeModule(model, fastCaptions: configuration.fastCaptions)
         guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module.speechModule]) else {
             throw SpeechEngineError.audioFormatUnavailable
         }
+        // Live captions: analysis runs at user-initiated priority, and the
+        // model stays in memory for a while after a run ends, so the new run
+        // after an interruption or a camera pause doesn't reload it.
+        let analyzer = SpeechAnalyzer(
+            modules: [module.speechModule],
+            options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .lingering)
+        )
+        // Load the model before the microphone starts. Otherwise the analyzer
+        // does this when the first audio arrives, and the first captions lag
+        // behind until it catches up.
+        let prepareStarted = Date()
+        do {
+            try await analyzer.prepareToAnalyze(in: analyzerFormat)
+            logEngine("Run \(runID): speech model ready in \(Int(Date().timeIntervalSince(prepareStarted) * 1000)) ms")
+        } catch {
+            // Not fatal: the analyzer then prepares itself on the first audio.
+            logEngine("Run \(runID): preparing the speech model failed: \(EngineDescribe.error(error))")
+        }
+        guard isActive, !isStopping else { throw CancellationError() }
 
         var audioFile: AudioFileWriter?
         if let directory = configuration.audioDirectory {
@@ -270,9 +293,10 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             throw error
         }
 
+        let resultsLog = self.log
         let resultsTask = Task {
             do {
-                try await Self.consumeResults(module: module, capture: capture, events: events)
+                try await Self.consumeResults(module: module, capture: capture, events: events, log: resultsLog)
                 self.runResultsEnded(runID: runID, error: nil)
             } catch {
                 self.runResultsEnded(runID: runID, error: error)
@@ -312,7 +336,7 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
             configurationObserver: observer,
             startedAt: Date()
         )
-        logEngine("Run \(runID) started (\(model.kind.rawValue), \(model.locale.identifier))")
+        logEngine("Run \(runID) started (\(model.kind.rawValue), \(model.locale.identifier), fast captions \(configuration.fastCaptions && model.kind == .speech ? "on" : "off"))")
     }
 
     /// Stops a run's capture and waits until its last final results are
@@ -350,19 +374,40 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         logEngine("Run \(run.id) finalized after \(Int(Date().timeIntervalSince(run.startedAt))) s")
     }
 
+    /// How often each run writes its caption delay to the diagnostics log.
+    private static let delayReportInterval: TimeInterval = 120
+
     private static func consumeResults(
         module: TranscriberModule,
         capture: CaptureRun,
-        events: AsyncStream<TranscriptionEvent>.Continuation
+        events: AsyncStream<TranscriptionEvent>.Continuation,
+        log: DiagnosticsLog
     ) async throws {
+        var delays = CaptionDelayStats()
+        func handle(text: String, isFinal: Bool, range: CMTimeRange) {
+            // Hand the text on first; measuring comes after.
+            deliver(text: text, isFinal: isFinal, range: range, capture: capture, events: events)
+            let now = Date()
+            if let delay = capture.resultDelay(for: range, now: now) {
+                delays.record(delay: delay, isFinal: isFinal)
+            }
+            if let line = delays.report(now: now, every: delayReportInterval) {
+                log.log("Run \(capture.id): \(line)", category: "engine")
+            }
+        }
+        defer {
+            if let line = delays.report(every: delayReportInterval, force: true) {
+                log.log("Run \(capture.id): \(line)", category: "engine")
+            }
+        }
         switch module {
         case .speech(let transcriber):
             for try await result in transcriber.results {
-                deliver(text: String(result.text.characters), isFinal: result.isFinal, range: result.range, capture: capture, events: events)
+                handle(text: String(result.text.characters), isFinal: result.isFinal, range: result.range)
             }
         case .dictation(let transcriber):
             for try await result in transcriber.results {
-                deliver(text: String(result.text.characters), isFinal: result.isFinal, range: result.range, capture: capture, events: events)
+                handle(text: String(result.text.characters), isFinal: result.isFinal, range: result.range)
             }
         }
     }

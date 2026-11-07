@@ -80,13 +80,17 @@ enum SpeechModelSetup {
         throw SpeechEngineError.languageNotSupported(TranscriptLanguage.displayName(for: localeIdentifier))
     }
 
-    static func makeModule(_ model: ResolvedModel) -> TranscriberModule {
+    /// - Parameter fastCaptions: also ask for `.fastResults`, which makes the
+    ///   recognizer use a smaller context window: live (volatile) text arrives
+    ///   sooner, but can be slightly less accurate. Apple's
+    ///   `progressiveTranscription` preset uses the same reporting options.
+    static func makeModule(_ model: ResolvedModel, fastCaptions: Bool = false) -> TranscriberModule {
         switch model.kind {
         case .speech:
             .speech(SpeechTranscriber(
                 locale: model.locale,
                 transcriptionOptions: [],
-                reportingOptions: [.volatileResults],
+                reportingOptions: fastCaptions ? [.volatileResults, .fastResults] : [.volatileResults],
                 attributeOptions: [.audioTimeRange]
             ))
         case .dictation:
@@ -94,13 +98,15 @@ enum SpeechModelSetup {
         }
     }
 
-    /// Fallback transcriber, kept in one place because it is the least certain
-    /// API in this engine. Punctuation is on; volatile results and audio time
-    /// ranges match what the SpeechTranscriber path asks for.
+    /// The dictation transcriber, chosen in Settings or used when
+    /// SpeechTranscriber isn't available. Like Apple's
+    /// `progressiveLongDictation` preset (punctuation, volatile results, no
+    /// short-form hint), plus audio time ranges for timestamps and the
+    /// far-field hint, because the speaker is usually across the room.
     static func makeDictationTranscriber(locale: Locale) -> DictationTranscriber {
         DictationTranscriber(
             locale: locale,
-            contentHints: [],
+            contentHints: [.farField],
             transcriptionOptions: [.punctuation],
             reportingOptions: [.volatileResults],
             attributeOptions: [.audioTimeRange]

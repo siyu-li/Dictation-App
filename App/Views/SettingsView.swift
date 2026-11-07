@@ -24,6 +24,20 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("Speech model", selection: $settings.speechModel) {
+                        ForEach(SpeechModelChoice.allCases) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
+                    }
+                    Toggle("Faster live captions", isOn: $settings.fastCaptions)
+                        .disabled(settings.speechModel != .meeting)
+                } header: {
+                    Text("Live captions")
+                } footer: {
+                    Text("Meeting is Apple's newest model, made for long talks and speakers away from the phone. Dictation is the engine behind keyboard dictation and shows words as they're spoken. Try both on a real talk and keep the one that works better for you. Faster live captions (Meeting only) show words sooner, but the saved text can be slightly less accurate. Changes apply to the next recording.")
+                }
+
+                Section {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("New paragraph after a pause of")

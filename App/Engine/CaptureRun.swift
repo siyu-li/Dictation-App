@@ -41,6 +41,14 @@ final class CaptureRun: @unchecked Sendable {
     /// Buffers normally arrive every ~0.1 s.
     private static let maxBufferGap: TimeInterval = 1.5
 
+    /// Asks for about 50 ms of audio per buffer, whatever the microphone's
+    /// sample rate, so speech reaches the recognizer quickly. iOS may deliver
+    /// larger buffers (often 100 ms). A fixed 4096 frames would mean 256 ms
+    /// per buffer from a 16 kHz Bluetooth headset microphone.
+    static func tapBufferSize(for format: AVAudioFormat) -> AVAudioFrameCount {
+        AVAudioFrameCount(max(256, (format.sampleRate * 0.05).rounded()))
+    }
+
     init(
         id: Int,
         analyzerFormat: AVAudioFormat,
@@ -72,7 +80,7 @@ final class CaptureRun: @unchecked Sendable {
             "Run \(id): mic \(EngineDescribe.format(inputFormat)) → analyzer \(EngineDescribe.format(analyzerFormat))",
             category: "engine"
         )
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize(for: inputFormat), format: inputFormat) { [weak self] buffer, _ in
             self?.process(buffer)
         }
         lock.withLock { captureStarted = true }
@@ -134,6 +142,15 @@ final class CaptureRun: @unchecked Sendable {
             return (start, start)
         }
         return (start, start.addingTimeInterval(durationSeconds))
+    }
+
+    /// How long after the end of the audio in `range` a result arrived at
+    /// `now`, or `nil` if the range or the time anchor is missing.
+    func resultDelay(for range: CMTimeRange, now: Date = Date()) -> TimeInterval? {
+        guard let anchor = lock.withLock({ firstAudioDate }) else { return nil }
+        let end = range.end
+        guard range.isValid, end.isValid, end.isNumeric, end.seconds.isFinite else { return nil }
+        return now.timeIntervalSince(anchor.addingTimeInterval(end.seconds))
     }
 
     /// Closes the audio file. Returns its name if it holds audio; an empty file

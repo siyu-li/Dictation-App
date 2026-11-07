@@ -25,6 +25,8 @@ final class RecordingCoordinatorTests: XCTestCase {
         try await coordinator.start(language: "en-US", saveAudio: false)
         XCTAssertEqual(coordinator.state, .recording)
         XCTAssertNil(engine.configurations.first?.audioDirectory)
+        XCTAssertEqual(engine.configurations.first?.fastCaptions, true, "fast captions are on by default")
+        XCTAssertEqual(engine.configurations.first?.speechModel, .meeting, "the meeting model is the default")
         let id = try XCTUnwrap(coordinator.session?.id)
         XCTAssertEqual(try store.load(id: id).startedAt, t0, "session is saved as soon as it starts")
 
@@ -58,6 +60,13 @@ final class RecordingCoordinatorTests: XCTestCase {
         engine.send(.final(text: "Via stream.", start: at(1), end: at(2)))
         let finished = await coordinator.stop()
         XCTAssertEqual(finished?.speechSegments.map(\.text), ["Via stream."])
+    }
+
+    func testCaptionSettingsReachEngine() async throws {
+        try await coordinator.start(language: "en-US", saveAudio: false, fastCaptions: false, speechModel: .dictation)
+        XCTAssertEqual(engine.configurations.first?.fastCaptions, false)
+        XCTAssertEqual(engine.configurations.first?.speechModel, .dictation)
+        _ = await coordinator.stop()
     }
 
     func testSaveAudioPassesSessionAudioDirectory() async throws {

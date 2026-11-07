@@ -18,6 +18,17 @@ final class AppSettings {
         didSet { defaults.set(saveAudio, forKey: Keys.saveAudio) }
     }
 
+    /// Live captions appear sooner; the recognizer then looks at less
+    /// surrounding speech, so the text can be slightly less accurate. On by default.
+    var fastCaptions: Bool {
+        didSet { defaults.set(fastCaptions, forKey: Keys.fastCaptions) }
+    }
+
+    /// Which on-device speech model transcribes new recordings.
+    var speechModel: SpeechModelChoice {
+        didSet { defaults.set(speechModel.rawValue, forKey: Keys.speechModel) }
+    }
+
     /// Silence (seconds) that starts a new paragraph.
     var pauseThreshold: Double {
         didSet { defaults.set(pauseThreshold, forKey: Keys.pauseThreshold) }
@@ -41,6 +52,8 @@ final class AppSettings {
         self.defaults = defaults
         language = TranscriptLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .englishUS
         saveAudio = defaults.bool(forKey: Keys.saveAudio)
+        fastCaptions = defaults.object(forKey: Keys.fastCaptions) as? Bool ?? true
+        speechModel = SpeechModelChoice(rawValue: defaults.string(forKey: Keys.speechModel) ?? "") ?? .meeting
         let pause = defaults.double(forKey: Keys.pauseThreshold)
         pauseThreshold = pause > 0 ? pause : 2.0
         timestampStyle = TimestampStyle(rawValue: defaults.string(forKey: Keys.timestampStyle) ?? "") ?? .clock
@@ -59,6 +72,8 @@ final class AppSettings {
     private enum Keys {
         static let language = "settings.language"
         static let saveAudio = "settings.saveAudio"
+        static let fastCaptions = "settings.fastCaptions"
+        static let speechModel = "settings.speechModel"
         static let pauseThreshold = "settings.pauseThreshold"
         static let timestampStyle = "settings.timestampStyle"
         static let notesShortcutName = "settings.notesShortcutName"

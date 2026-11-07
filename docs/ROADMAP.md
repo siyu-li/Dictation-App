@@ -38,6 +38,11 @@ summary, saved to Apple Notes with as few taps as possible.
 - ✅ Lock Screen Live Activity with elapsed time, the latest line, photo and
   bookmark counts, and New speaker / Bookmark buttons (`Widgets/`, `Shared/`,
   `App/LiveActivity/`)
+- ✅ Lower caption delay: SpeechTranscriber `.fastResults` (Settings →
+  Faster live captions, on by default), speech model loaded before the
+  microphone starts and kept in memory between runs, user-initiated analysis
+  priority, ~50 ms audio buffers; the caption delay is written to Diagnostics
+  every 2 minutes
 - Battery and storage checks for 3-hour sessions
 
 ## Review loop
@@ -76,5 +81,9 @@ Things CI can't check, to try after each milestone:
 6. Force-quit the app mid-recording, reopen: session recovered up to the last
    few seconds?
 7. English and Chinese sessions.
+8. Caption delay and accuracy: record the same kind of talk with Speech model
+   Meeting (Faster live captions on, then off) and Dictation; compare how fast
+   the caption follows, the "Caption delay" lines in Diagnostics, and the
+   saved text.
 
 After each test, share Settings → Diagnostics.
