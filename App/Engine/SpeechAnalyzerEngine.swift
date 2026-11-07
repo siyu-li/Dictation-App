@@ -124,14 +124,19 @@ actor SpeechAnalyzerEngine: TranscriptionEngine {
         quickFailures = 0
         let (stream, continuation) = AsyncStream.makeStream(of: TranscriptionEvent.self, bufferingPolicy: .unbounded)
         events = continuation
-        logEngine("Starting: locale=\(configuration.localeIdentifier) saveAudio=\(configuration.audioDirectory != nil)")
+        logEngine("Starting: locale=\(configuration.localeIdentifier) saveAudio=\(configuration.audioDirectory != nil) model=\(configuration.speechModel.rawValue)")
 
         do {
             try await Self.requestMicrophonePermission(log: log)
             try ensureCurrent(gen) // cancelled while the permission prompt was up
             try Self.activateAudioSession(log: log)
             let status: @Sendable (String) -> Void = { continuation.yield(.status($0)) }
-            var resolved = try await resolveModel(configuration.localeIdentifier, allowSpeechTranscriber: true, status: status)
+            // The meeting model falls back to dictation when it isn't available.
+            var resolved = try await resolveModel(
+                configuration.localeIdentifier,
+                allowSpeechTranscriber: configuration.speechModel == .meeting,
+                status: status
+            )
             try ensureCurrent(gen)
             model = resolved
             // Listen for interruptions before the first run starts so none are missed.

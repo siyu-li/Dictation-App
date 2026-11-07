@@ -8,9 +8,11 @@ nothing needs copying out by hand.
 |:---:|:---:|:---:|:---:|
 | <img src="docs/screenshots/home.webp" width="200" alt="Home screen with saved recordings, language switch and Record button"> | <img src="docs/screenshots/recording.webp" width="200" alt="Recording screen with live captions, Slide photo, New speaker, Bookmark and Stop"> | <img src="docs/screenshots/lock-screen.webp" width="200" alt="Lock Screen controls showing the recording, New speaker and Bookmark"> | <img src="docs/screenshots/transcript.webp" width="200" alt="Transcript with AI summary card, editing tip, text and a photo"> |
 
-- On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese,
-  with fast live captions (Settings → *Faster live captions*, on by default;
-  turn it off if the saved text's accuracy matters more than caption speed)
+- On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese.
+  Settings → *Speech model*: **Meeting** (Apple's newest model, for long talks
+  and distant speakers; default) or **Dictation** (the keyboard-dictation
+  engine, which shows words as they're spoken). *Faster live captions* (on by
+  default) makes the Meeting model show words sooner, at a small cost in accuracy
 - Keeps recording with the screen locked; resumes by itself after interruptions
   and marks any gap in the transcript
 - Take photos of slides from inside the app; they appear in the transcript at

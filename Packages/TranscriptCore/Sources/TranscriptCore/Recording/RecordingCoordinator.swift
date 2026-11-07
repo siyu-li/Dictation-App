@@ -73,7 +73,12 @@ public final class RecordingCoordinator {
 
     /// Starts a new session. Throws if the engine cannot start; the empty
     /// session is then discarded.
-    public func start(language: String, saveAudio: Bool, fastCaptions: Bool = true) async throws {
+    public func start(
+        language: String,
+        saveAudio: Bool,
+        fastCaptions: Bool = true,
+        speechModel: SpeechModelChoice = .meeting
+    ) async throws {
         guard state == .idle else { return }
         lastError = nil
         openGapID = nil
@@ -88,7 +93,8 @@ public final class RecordingCoordinator {
             let configuration = TranscriptionConfiguration(
                 localeIdentifier: language,
                 audioDirectory: saveAudio ? store.audioDirectory(for: newSession.id) : nil,
-                fastCaptions: fastCaptions
+                fastCaptions: fastCaptions,
+                speechModel: speechModel
             )
             let events = try await engine.start(configuration)
             guard generation == startGeneration else {
@@ -102,7 +108,7 @@ public final class RecordingCoordinator {
                 return
             }
             state = .recording
-            log?.log("Recording started: \(newSession.id) language=\(language) saveAudio=\(saveAudio) fastCaptions=\(fastCaptions)", category: "recorder")
+            log?.log("Recording started: \(newSession.id) language=\(language) saveAudio=\(saveAudio) fastCaptions=\(fastCaptions) model=\(speechModel.rawValue)", category: "recorder")
             eventTask = Task { [weak self] in
                 for await event in events {
                     self?.handle(event)

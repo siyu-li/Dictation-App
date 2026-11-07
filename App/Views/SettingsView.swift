@@ -16,12 +16,25 @@ struct SettingsView: View {
                             Text(language.displayName).tag(language)
                         }
                     }
-                    Toggle("Faster live captions", isOn: $settings.fastCaptions)
                     Toggle("Save audio", isOn: $settings.saveAudio)
                 } header: {
                     Text("Recording")
                 } footer: {
-                    Text("Speech is recognized on your iPhone, one language per recording. Faster live captions show words sooner; the saved text can be slightly less accurate, so turn it off if accuracy matters more. Changes apply to the next recording. Saving audio keeps a sound recording next to the transcript, about 15–30 MB per hour; it's off by default to save storage.")
+                    Text("Speech is recognized on your iPhone, one language per recording. Saving audio keeps a sound recording next to the transcript, about 15–30 MB per hour; it's off by default to save storage.")
+                }
+
+                Section {
+                    Picker("Speech model", selection: $settings.speechModel) {
+                        ForEach(SpeechModelChoice.allCases) { choice in
+                            Text(choice.displayName).tag(choice)
+                        }
+                    }
+                    Toggle("Faster live captions", isOn: $settings.fastCaptions)
+                        .disabled(settings.speechModel != .meeting)
+                } header: {
+                    Text("Live captions")
+                } footer: {
+                    Text("Meeting is Apple's newest model, made for long talks and speakers away from the phone. Dictation is the engine behind keyboard dictation and shows words as they're spoken. Try both on a real talk and keep the one that works better for you. Faster live captions (Meeting only) show words sooner, but the saved text can be slightly less accurate. Changes apply to the next recording.")
                 }
 
                 Section {

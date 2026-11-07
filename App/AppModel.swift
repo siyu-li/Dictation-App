@@ -186,10 +186,16 @@ final class AppModel {
         let language = settings.language.rawValue
         let saveAudio = settings.saveAudio
         let fastCaptions = settings.fastCaptions
+        let speechModel = settings.speechModel
         let recorder = recorder
         let task = Task {
             do {
-                try await recorder.start(language: language, saveAudio: saveAudio, fastCaptions: fastCaptions)
+                try await recorder.start(
+                    language: language,
+                    saveAudio: saveAudio,
+                    fastCaptions: fastCaptions,
+                    speechModel: speechModel
+                )
             } catch {
                 // Already logged and exposed via recorder.lastError.
             }

@@ -1,5 +1,24 @@
 import Foundation
 
+/// Which of Apple's on-device speech models transcribes a recording.
+public enum SpeechModelChoice: String, Sendable, CaseIterable, Identifiable, Codable {
+    /// SpeechTranscriber: Apple's newest model, built for long recordings,
+    /// meetings and speakers away from the microphone.
+    case meeting
+    /// DictationTranscriber: the engine behind keyboard dictation, which shows
+    /// words as they are spoken. Set up here for a speaker across the room.
+    case dictation
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .meeting: "Meeting"
+        case .dictation: "Dictation"
+        }
+    }
+}
+
 public struct TranscriptionConfiguration: Sendable, Equatable {
     /// BCP-47 identifier, e.g. `en-US` or `zh-CN`.
     public var localeIdentifier: String
@@ -8,11 +27,20 @@ public struct TranscriptionConfiguration: Sendable, Equatable {
     /// Show live captions sooner, at the cost of slightly less accurate
     /// text (the recognizer looks at less surrounding speech).
     public var fastCaptions: Bool
+    /// The speech model to use. If the meeting model isn't available for the
+    /// language or device, the engine uses dictation instead.
+    public var speechModel: SpeechModelChoice
 
-    public init(localeIdentifier: String, audioDirectory: URL? = nil, fastCaptions: Bool = true) {
+    public init(
+        localeIdentifier: String,
+        audioDirectory: URL? = nil,
+        fastCaptions: Bool = true,
+        speechModel: SpeechModelChoice = .meeting
+    ) {
         self.localeIdentifier = localeIdentifier
         self.audioDirectory = audioDirectory
         self.fastCaptions = fastCaptions
+        self.speechModel = speechModel
     }
 }
 

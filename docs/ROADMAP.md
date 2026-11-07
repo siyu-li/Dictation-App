@@ -81,7 +81,9 @@ Things CI can't check, to try after each milestone:
 6. Force-quit the app mid-recording, reopen: session recovered up to the last
    few seconds?
 7. English and Chinese sessions.
-8. Caption delay: speak and watch the caption, then check the "Caption delay"
-   lines in Diagnostics; compare with Faster live captions off.
+8. Caption delay and accuracy: record the same kind of talk with Speech model
+   Meeting (Faster live captions on, then off) and Dictation; compare how fast
+   the caption follows, the "Caption delay" lines in Diagnostics, and the
+   saved text.
 
 After each test, share Settings → Diagnostics.
