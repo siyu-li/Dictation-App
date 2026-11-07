@@ -80,13 +80,17 @@ enum SpeechModelSetup {
         throw SpeechEngineError.languageNotSupported(TranscriptLanguage.displayName(for: localeIdentifier))
     }
 
-    static func makeModule(_ model: ResolvedModel) -> TranscriberModule {
+    /// - Parameter fastCaptions: also ask for `.fastResults`, which makes the
+    ///   recognizer use a smaller context window: live (volatile) text arrives
+    ///   sooner, but can be slightly less accurate. Apple's
+    ///   `progressiveTranscription` preset uses the same reporting options.
+    static func makeModule(_ model: ResolvedModel, fastCaptions: Bool = false) -> TranscriberModule {
         switch model.kind {
         case .speech:
             .speech(SpeechTranscriber(
                 locale: model.locale,
                 transcriptionOptions: [],
-                reportingOptions: [.volatileResults],
+                reportingOptions: fastCaptions ? [.volatileResults, .fastResults] : [.volatileResults],
                 attributeOptions: [.audioTimeRange]
             ))
         case .dictation:

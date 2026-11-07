@@ -8,7 +8,9 @@ nothing needs copying out by hand.
 |:---:|:---:|:---:|:---:|
 | <img src="docs/screenshots/home.webp" width="200" alt="Home screen with saved recordings, language switch and Record button"> | <img src="docs/screenshots/recording.webp" width="200" alt="Recording screen with live captions, Slide photo, New speaker, Bookmark and Stop"> | <img src="docs/screenshots/lock-screen.webp" width="200" alt="Lock Screen controls showing the recording, New speaker and Bookmark"> | <img src="docs/screenshots/transcript.webp" width="200" alt="Transcript with AI summary card, editing tip, text and a photo"> |
 
-- On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese
+- On-device speech recognition (Apple SpeechAnalyzer, iOS 26), English or Chinese,
+  with fast live captions (Settings → *Faster live captions*, on by default;
+  turn it off if the saved text's accuracy matters more than caption speed)
 - Keeps recording with the screen locked; resumes by itself after interruptions
   and marks any gap in the transcript
 - Take photos of slides from inside the app; they appear in the transcript at
@@ -174,5 +176,7 @@ swift test --package-path Packages/TranscriptCore
 ## Diagnostics
 
 Settings → Diagnostics shows a log of what the app did (start/stop,
-interruptions, errors). After testing on your phone, share that log so problems
-can be fixed based on what really happened.
+interruptions, errors). While recording it also notes, every 2 minutes, how far
+the captions trail the speech ("Caption delay … live text 0.60 s avg"). After
+testing on your phone, share that log so problems can be fixed based on what
+really happened.

@@ -5,10 +5,14 @@ public struct TranscriptionConfiguration: Sendable, Equatable {
     public var localeIdentifier: String
     /// Where to write audio files, or `nil` to not save audio (the default).
     public var audioDirectory: URL?
+    /// Show live captions sooner, at the cost of slightly less accurate
+    /// text (the recognizer looks at less surrounding speech).
+    public var fastCaptions: Bool
 
-    public init(localeIdentifier: String, audioDirectory: URL? = nil) {
+    public init(localeIdentifier: String, audioDirectory: URL? = nil, fastCaptions: Bool = true) {
         self.localeIdentifier = localeIdentifier
         self.audioDirectory = audioDirectory
+        self.fastCaptions = fastCaptions
     }
 }
 
